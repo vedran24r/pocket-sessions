@@ -1,0 +1,29 @@
+{
+  "name": "claude-pocket",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Watch and drive your Claude Code sessions from your phone, over your own Tailscale network.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "start": "node server/server.ts",
+    "icons": "node scripts/make-icons.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/web-push": "^3.6.4",
+    "@xterm/xterm": "^6.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  },
+  "license": "MIT",
+  "repository": "github:vedran24r/claude-pocket",
+  "engines": {
+    "node": ">=23.6"
+  }
+}

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# pocket — run Claude Code inside the pocket tmux server so the phone can see and type into it.
+#
+#   pocket run [claude args...]    start a new session for this directory (what the `claude` wrapper calls)
+#   pocket attach <name>           reattach to a session, e.g. after closing its terminal window
+#   pocket ls                      list sessions
+#
+# The profile comes from POCKET_PROFILE, else from CLAUDE_CONFIG_DIR (~/.claude-game → "game"), else "claude".
+set -euo pipefail
+
+POCKET_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+T=(tmux -L pocket -f "$POCKET_DIR/tmux.conf")
+CLAUDE_BIN="${POCKET_CLAUDE_BIN:-claude}"
+
+slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._' '-' | sed -e 's/--*/-/g' -e 's/^-//' -e 's/-$//'; }
+
+profile() {
+  if [[ -n "${POCKET_PROFILE:-}" ]]; then printf '%s' "$POCKET_PROFILE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'
+  elif [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then basename "$CLAUDE_CONFIG_DIR" | sed -e 's/^\.//' -e 's/^claude-//' | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'
+  else echo claude
+  fi
+}
+
+attach() {
+  if [[ -n "${TMUX:-}" ]]; then "${T[@]}" switch-client -t "=$1"; else exec "${T[@]}" attach-session -t "=$1"; fi
+}
+
+cmd_run() {
+  # Inside some tmux pane already, or not a terminal (scripts, pipes): run claude directly.
+  if [[ -n "${TMUX:-}" || ! -t 0 || ! -t 1 ]]; then exec "$CLAUDE_BIN" "$@"; fi
+  # One-shot commands (`claude --version`, `claude -p ...`, `claude mcp list`) aren't sessions.
+  case "${1:-}" in
+    mcp | plugin | plugins | update | upgrade | doctor | install | config | setup-token | migrate-installer | auth | agents | remote-control | rc)
+      exec "$CLAUDE_BIN" "$@" ;;
+  esac
+  local arg
+  for arg in "$@"; do
+    case "$arg" in -p | --print | -v | --version | -h | --help) exec "$CLAUDE_BIN" "$@" ;; esac
+  done
+
+  local base session n=1
+  base="cc-$(profile)-$(slug "$(basename "$PWD")")"
+  session="$base"
+  while "${T[@]}" has-session -t "=$session" 2>/dev/null; do n=$((n + 1)); session="$base-$n"; done
+
+  # The tmux server doesn't share this shell's environment, so hand it over explicitly
+  # (PATH, CLAUDE_CONFIG_DIR, AWS_PROFILE, nvm, ...).
+  local env_args=()
+  while IFS= read -r -d '' kv; do
+    case "${kv%%=*}" in TMUX | TMUX_PANE | TERM | SHLVL | PWD | OLDPWD | _ | COLUMNS | LINES) continue ;; esac
+    env_args+=(-e "$kv")
+  done < <(env -0)
+
+  "${T[@]}" new-session -d -s "$session" -c "$PWD" -x "$(tput cols)" -y "$(tput lines)" "${env_args[@]}" \
+    "$CLAUDE_BIN" "$@"
+  attach "$session"
+}
+
+case "${1:-}" in
+  run) shift; cmd_run "$@" ;;
+  attach) attach "${2:?usage: pocket attach <session>}" ;;
+  ls) "${T[@]}" list-sessions -F '#{session_name}  #{?session_attached,(attached),}' 2>/dev/null | grep '^cc-' || echo "no sessions" ;;
+  *) sed -n '3,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
