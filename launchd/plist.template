@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>ai.claude-pocket</string>
+  <key>Label</key><string>ai.pocket-sessions</string>
   <key>ProgramArguments</key>
   <array>
     <string>{{NODE}}</string>
@@ -18,7 +18,7 @@
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>{{HOME}}/.claude-pocket/server.log</string>
-  <key>StandardErrorPath</key><string>{{HOME}}/.claude-pocket/server.log</string>
+  <key>StandardOutPath</key><string>{{HOME}}/.pocket-sessions/server.log</string>
+  <key>StandardErrorPath</key><string>{{HOME}}/.pocket-sessions/server.log</string>
 </dict>
 </plist>

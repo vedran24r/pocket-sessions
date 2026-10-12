@@ -7,7 +7,7 @@
 # Only interactive sessions: `claude -p` runs (scripts, other tools) report "sdk-cli" and would spam pushes.
 [[ "${CLAUDE_CODE_ENTRYPOINT:-cli}" == "cli" ]] || exit 0
 
-token="$(cat "${POCKET_STATE_DIR:-$HOME/.claude-pocket}/hook-token" 2>/dev/null)" || exit 0
+token="$(cat "${POCKET_STATE_DIR:-$HOME/.pocket-sessions}/hook-token" 2>/dev/null)" || exit 0
 payload="$(cat)"
 
 session=""

@@ -29,11 +29,11 @@ node scripts/install-hooks.mjs "$@"
 
 say "Starting the server at login (launchd)"
 LOGIN="$("$TS" status --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);console.log(j.User[String(j.Self.UserID)].LoginName)})')"
-PLIST="$HOME/Library/LaunchAgents/ai.claude-pocket.plist"
+PLIST="$HOME/Library/LaunchAgents/ai.pocket-sessions.plist"
 sed -e "s|{{NODE}}|$(command -v node)|" -e "s|{{ROOT}}|$ROOT|g" -e "s|{{HOME}}|$HOME|g" -e "s|{{USERS}}|$LOGIN|" \
   -e "s|{{PATH}}|$(dirname "$(command -v tmux)"):/usr/bin:/bin|" launchd/plist.template >"$PLIST"
-launchctl bootout "gui/$(id -u)/ai.claude-pocket" 2>/dev/null || true
-for _ in {1..20}; do launchctl print "gui/$(id -u)/ai.claude-pocket" >/dev/null 2>&1 || break; sleep 0.25; done
+launchctl bootout "gui/$(id -u)/ai.pocket-sessions" 2>/dev/null || true
+for _ in {1..20}; do launchctl print "gui/$(id -u)/ai.pocket-sessions" >/dev/null 2>&1 || break; sleep 0.25; done
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
 say "Publishing on your tailnet"

@@ -1,4 +1,4 @@
-# Pocket
+# Pocket Sessions
 
 **Your AI coding agents on your phone.** See every running session live, scroll the conversation, reply by voice, answer prompts, and get a push notification when a session finishes or needs you. Claude Code gets the richest integration; Codex, Gemini CLI, Aider, OpenCode or any other terminal agent works too.
 
@@ -60,8 +60,8 @@ Richer adapters (a chat view and exact notifications for Codex and friends) are 
 ## Install
 
 ```bash
-git clone https://github.com/vedran24r/claude-pocket.git ~/Projects/claude-pocket
-cd ~/Projects/claude-pocket
+git clone https://github.com/vedran24r/pocket-sessions.git ~/Projects/pocket-sessions
+cd ~/Projects/pocket-sessions
 scripts/install.sh                          # or: scripts/install.sh ~/.claude ~/.claude-work   (several config dirs)
 ```
 
@@ -98,7 +98,7 @@ Anyone who can open the app can type into your sessions, so:
 
 - The server binds to `127.0.0.1` and is reachable only through `tailscale serve`.
 - Every request must carry Tailscale's `Tailscale-User-Login` header, and that login must be in `POCKET_USERS`. The server refuses to start with an empty list.
-- Hooks authenticate with a random token in `~/.claude-pocket/hook-token` (mode 600).
+- Hooks authenticate with a random token in `~/.pocket-sessions/hook-token` (mode 600).
 - Don't expose it with `tailscale funnel`.
 
 ## Development
@@ -110,12 +110,12 @@ npm run dev                                            # Vite on :5173, proxies 
 npm run typecheck
 ```
 
-After changing `web/`, run `npm run build`. After changing `server/`, run `launchctl kickstart -k gui/$(id -u)/ai.claude-pocket`. Logs are in `~/.claude-pocket/server.log`.
+After changing `web/`, run `npm run build`. After changing `server/`, run `launchctl kickstart -k gui/$(id -u)/ai.pocket-sessions`. Logs are in `~/.pocket-sessions/server.log`.
 
 ## Uninstall
 
 ```bash
-launchctl bootout gui/$(id -u)/ai.claude-pocket && rm ~/Library/LaunchAgents/ai.claude-pocket.plist
+launchctl bootout gui/$(id -u)/ai.pocket-sessions && rm ~/Library/LaunchAgents/ai.pocket-sessions.plist
 tailscale serve --https=443 off
 rm ~/.local/bin/pocket
 ```

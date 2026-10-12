@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { PushSubscription } from "web-push";
 
-export const STATE_DIR = process.env.POCKET_STATE_DIR ?? path.join(os.homedir(), ".claude-pocket");
+export const STATE_DIR = process.env.POCKET_STATE_DIR ?? path.join(os.homedir(), ".pocket-sessions");
 mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 
 export type Status = "idle" | "working" | "waiting" | "done" | "ended";
