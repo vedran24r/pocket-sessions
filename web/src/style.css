@@ -101,3 +101,5 @@ textarea:focus { border-color: var(--accent); }
 .takeover { width: 100%; padding: 12px; background: var(--accent); border: none; color: #fff; font-weight: 600; }
 .end { padding: 4px 10px; font-size: 13px; color: var(--muted); background: transparent; }
 .tabs[hidden] { display: none; }
+.shared-note { margin: 8px 10px 0; padding: 8px 10px; border-radius: 10px; font-size: 13px; color: var(--working); background: color-mix(in srgb, var(--working) 12%, transparent); }
+.shared-note[hidden] { display: none; }

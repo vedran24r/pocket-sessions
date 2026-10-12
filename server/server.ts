@@ -7,7 +7,7 @@ import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
 import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
-import { lastAssistantText, TranscriptTail } from "./transcript.ts";
+import { BranchView, lastAssistantText, TranscriptTail } from "./transcript.ts";
 
 const PORT = Number(process.env.POCKET_PORT ?? 8787);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
@@ -70,6 +70,12 @@ async function handleHook(session: string, event: any, configDir: string, pid: n
   if (configDir) info.configDir = configDir;
   if (pid > 1) info.pid = pid;
   save();
+  const anchor =
+    event.hook_event_name === "UserPromptSubmit" && typeof event.prompt === "string" ? `prompt:${event.prompt.trim()}`
+    : event.hook_event_name === "PostToolUse" && typeof event.tool_use_id === "string" ? `tool:${event.tool_use_id}`
+    : event.hook_event_name === "Stop" && typeof event.last_assistant_message === "string" ? `reply:${event.last_assistant_message.trim()}`
+    : undefined;
+  if (anchor) info.anchors = [...(info.anchors ?? []), anchor].slice(-12);
   const name = short(session);
   console.log(new Date().toISOString(), session, event.hook_event_name, event.notification_type ?? event.source ?? "");
 
@@ -240,15 +246,25 @@ function openEventStream(req: IncomingMessage, res: ServerResponse, intervalMs: 
   });
 }
 
+/** Other live sessions writing to the same transcript (two terminals resumed one conversation). */
+function sharingWith(session: string): string[] {
+  const file = state.sessions[session]?.transcript;
+  if (!file) return [];
+  return Object.entries(state.sessions)
+    .filter(([name, info]) => name !== session && info.transcript === file && !info.movedTo && !info.hidden && info.status !== "ended")
+    .map(([name]) => short(name));
+}
+
 function chatStream(req: IncomingMessage, res: ServerResponse, session: string) {
   let tail: TranscriptTail | undefined;
+  let branch: { file: string; source: TranscriptTail; view: BranchView; shown: string } | undefined;
   let lastStatus = "";
   const listeners = statusListeners.get(session) ?? new Set();
   statusListeners.set(session, listeners);
 
   const sendStatus = (send: (event: string, data: unknown) => void) => {
     const info = state.sessions[session];
-    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: short(session), agent: agentOf.get(session) ?? info?.agent ?? "claude", hasChat: !!info?.transcript };
+    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: short(session), agent: agentOf.get(session) ?? info?.agent ?? "claude", hasChat: !!info?.transcript, sharedWith: sharingWith(session) };
     const key = JSON.stringify(status);
     if (key !== lastStatus) {
       lastStatus = key;
@@ -267,6 +283,30 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
       sendStatus(send);
       const file = state.sessions[session]?.transcript;
       if (!file) return;
+      if (sharingWith(session).length) {
+        // Another window writes to this conversation too: show only this window's thread.
+        if (branch?.file !== file) {
+          const source = new TranscriptTail(file);
+          branch = { file, source, view: new BranchView(), shown: "" };
+          for (const line of await source.initialLines(64 * 1024 * 1024)) branch.view.add(line);
+          tail = undefined;
+        } else {
+          for (const line of await branch.source.nextLines()) branch.view.add(line);
+        }
+        const leaf = branch.view.leaf(state.sessions[session]?.anchors ?? []);
+        if (leaf) {
+          const items = branch.view.items(leaf);
+          const shown = `${leaf}:${items.length}`;
+          if (shown !== branch.shown) {
+            branch.shown = shown;
+            send("chat", { reset: true, items });
+          }
+          return;
+        }
+        branch = undefined; // no anchor yet: fall back to the whole file
+      } else {
+        branch = undefined;
+      }
       if (tail?.file !== file) {
         tail = new TranscriptTail(file);
         send("chat", { reset: true, items: await tail.initial() });

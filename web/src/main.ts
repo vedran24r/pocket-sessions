@@ -218,6 +218,7 @@ function renderSession(name: string) {
   };
 
   const chat = h("div", { class: "chat" });
+  const shared = h("div", { class: "shared-note", hidden: true });
   const tabs = readonly ? undefined : h("nav", { class: "tabs" }, chatTab, termTab);
   let terminalOnly = false;
   const termWrap = h("div", { class: "term", hidden: true });
@@ -251,6 +252,7 @@ function renderSession(name: string) {
   app.replaceChildren(
     h("header", { class: "bar" }, back, titleEl, statusEl, end),
     ...(tabs ? [tabs] : []),
+    shared,
     chat,
     termWrap,
     readonly
@@ -269,8 +271,12 @@ function renderSession(name: string) {
     if (stick) chat.scrollTop = chat.scrollHeight;
   });
   chatSource.addEventListener("status", (event) => {
-    const { status, note, title: liveTitle, agent, hasChat } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string; hasChat?: boolean };
+    const { status, note, title: liveTitle, agent, hasChat, sharedWith } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string; hasChat?: boolean; sharedWith?: string[] };
     if (liveTitle) titleEl.textContent = liveTitle;
+    shared.hidden = !sharedWith?.length;
+    shared.textContent = sharedWith?.length
+      ? `This conversation is also open in ${sharedWith.join(", ")}. Both windows write to the same history, so you're seeing only this window's thread. Start one of them with a fresh claude to keep them apart.`
+      : "";
     statusEl.textContent = STATUS_LABEL[status];
     statusEl.className = `status-pill status-${status}`;
     statusEl.title = note ?? "";

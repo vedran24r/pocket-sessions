@@ -134,17 +134,25 @@ export class TranscriptTail {
   }
 
   async initial(): Promise<Item[]> {
+    return (await this.initialLines()).flatMap(parseLine).slice(-INITIAL_ITEMS);
+  }
+
+  async next(): Promise<Item[]> {
+    return (await this.nextLines()).flatMap(parseLine);
+  }
+
+  async initialLines(maxBytes = INITIAL_BYTES): Promise<string[]> {
     const { size } = await stat(this.file);
-    const start = Math.max(0, size - INITIAL_BYTES);
+    const start = Math.max(0, size - maxBytes);
     const chunk = await this.read(start, size);
     this.offset = size;
     const lines = chunk.split("\n");
     if (start > 0) lines.shift(); // first line is partial
     this.remainder = lines.pop() ?? "";
-    return lines.flatMap(parseLine).slice(-INITIAL_ITEMS);
+    return lines;
   }
 
-  async next(): Promise<Item[]> {
+  async nextLines(): Promise<string[]> {
     const { size } = await stat(this.file);
     if (size < this.offset) {
       this.offset = 0; // rewritten
@@ -155,7 +163,7 @@ export class TranscriptTail {
     this.offset = size;
     const lines = chunk.split("\n");
     this.remainder = lines.pop() ?? "";
-    return lines.flatMap(parseLine);
+    return lines;
   }
 
   private async read(from: number, to: number): Promise<string> {
@@ -175,4 +183,71 @@ export async function lastAssistantText(file: string): Promise<string | undefine
   const tail = new TranscriptTail(file);
   const items = await tail.initial().catch(() => []);
   return items.findLast((item) => item.k === "assistant")?.t;
+}
+
+/**
+ * Two terminals that resume the same Claude conversation both append to one transcript, so the
+ * file holds two interleaved threads. Every entry names its parent (parentUuid), so each window's
+ * thread is the chain of parents behind the newest entry it wrote. Hooks tell us which entries a
+ * window wrote (its prompts, tool calls and replies): those are its anchors.
+ * Only used when two live sessions share a transcript; parallel tool calls also branch the chain,
+ * so a normal session keeps the plain, complete view.
+ */
+export class BranchView {
+  private entries = new Map<string, { parent?: string; items: Item[]; order: number }>();
+  private byAnchor = new Map<string, string>();
+  private count = 0;
+
+  add(line: string): void {
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (typeof entry.uuid !== "string" || entry.isSidechain) return;
+    const parent = entry.parentUuid ?? entry.logicalParentUuid ?? undefined;
+    this.entries.set(entry.uuid, { parent, items: parseLine(line), order: this.count++ });
+    for (const anchor of anchorsOf(entry)) this.byAnchor.set(anchor, entry.uuid);
+  }
+
+  /** The newest entry this window is known to have written, from its most recent anchors. */
+  leaf(anchors: string[]): string | undefined {
+    let best: string | undefined;
+    for (const anchor of anchors) {
+      const uuid = this.byAnchor.get(anchor);
+      if (uuid && (!best || this.entries.get(uuid)!.order > this.entries.get(best)!.order)) best = uuid;
+    }
+    return best;
+  }
+
+  /** Ancestors of the leaf, oldest first, then anything written below it since. */
+  items(leaf: string): Item[] {
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    for (let at: string | undefined = leaf; at && !seen.has(at) && this.entries.has(at); at = this.entries.get(at)!.parent) {
+      seen.add(at);
+      chain.push(at);
+    }
+    chain.reverse();
+    const below = new Set([leaf]);
+    const after = [...this.entries.entries()]
+      .filter(([, entry]) => entry.order > this.entries.get(leaf)!.order)
+      .sort((a, b) => a[1].order - b[1].order)
+      .filter(([uuid, entry]) => entry.parent && below.has(entry.parent) && below.add(uuid));
+    return [...chain.flatMap((uuid) => this.entries.get(uuid)!.items), ...after.flatMap(([, entry]) => entry.items)].slice(-INITIAL_ITEMS);
+  }
+}
+
+/** Keys a hook event can be matched against: a prompt's text, a tool call id, a reply's text. */
+export function anchorsOf(entry: any): string[] {
+  const content = entry.message?.content;
+  if (entry.type === "user" && typeof content === "string") return [`prompt:${content.trim()}`];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block: any) => {
+    if (entry.type === "user" && block.type === "text" && block.text) return [`prompt:${block.text.trim()}`];
+    if (entry.type === "assistant" && block.type === "tool_use" && block.id) return [`tool:${block.id}`];
+    if (entry.type === "assistant" && block.type === "text" && block.text) return [`reply:${block.text.trim()}`];
+    return [];
+  });
 }

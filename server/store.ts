@@ -30,6 +30,8 @@ export interface SessionInfo {
   hidden?: boolean;
   /** The agent process, for read-only sessions: gone means its window was closed. */
   pid?: number;
+  /** Recent prompts / tool calls / replies this session wrote, to find its thread in a shared transcript. */
+  anchors?: string[];
 }
 
 interface State {
