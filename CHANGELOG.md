@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.0.2 — 2026-10-12
 
+- The `claude()` / `codex()` wrappers call `~/.local/bin/pocket` by full path, so they work on a fresh Mac where `~/.local/bin` isn't on the PATH.
+- README lists everything needed: git, curl and MagicDNS on the computer side, and the phone's Tailscale app plus a supported browser (Chrome on Android, Safari on iOS 16.4+ added to the Home Screen).
 - View-only sessions show their conversation name too, read from Claude's transcript.
 
 ## 1.0.1 — 2026-10-12

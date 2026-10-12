@@ -56,10 +56,10 @@ Adapters for more agents are welcome: one parser in `server/transcript.ts` and o
 
 ## Requirements
 
-- macOS (launchd) or Linux (systemd user service)
-- Node 23.6+, tmux (`brew install tmux` / `apt install tmux`), and Tailscale on the computer and the phone
+- **Computer:** macOS (launchd) or Linux (systemd user service), with Claude Code (or another terminal agent), Node 23.6+, tmux (`brew install tmux` / `apt install tmux`), git, curl and [Tailscale](https://tailscale.com/download)
+- **Phone:** the Tailscale app, signed in to the same tailnet, and a browser that can install web apps and receive push: Chrome on Android, or Safari on iOS 16.4+ (on iOS, push only works after **Add to Home Screen**)
 - Linux only: let your user manage Tailscale once with `sudo tailscale set --operator=$USER`, and run `sudo loginctl enable-linger $USER` if sessions should stay reachable while you're logged out
-- In the Tailscale admin console: **Serve** and **HTTPS certificates** enabled. The first `tailscale serve` prints the link if they aren't.
+- In the Tailscale admin console: **MagicDNS**, **HTTPS certificates** and **Serve** enabled. The first `tailscale serve` prints the link if they aren't.
 
 ## Install
 
@@ -72,7 +72,7 @@ scripts/install.sh                          # or: scripts/install.sh ~/.claude ~
 Then add the wrapper to `~/.zshrc` (the installer prints this too):
 
 ```bash
-claude() { pocket run "$@"; }
+claude() { ~/.local/bin/pocket run "$@"; }
 ```
 
 Aliases that set `CLAUDE_CONFIG_DIR` and then call `claude` keep working. The profile name shown on the phone comes from the config dir (`~/.claude-work` → `work`), or from `POCKET_PROFILE`.

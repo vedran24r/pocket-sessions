@@ -25,7 +25,7 @@ npm run build --silent
 say "Linking pocket into ~/.local/bin"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$ROOT/bin/pocket" "$HOME/.local/bin/pocket"
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) say "Add ~/.local/bin to your PATH" ;; esac
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) say "Your PATH lacks ~/.local/bin; the wrappers below use the full path, but add it to use \`pocket ls\`/\`pocket attach\` directly" ;; esac
 
 say "Installing Claude Code hooks"
 node scripts/install-hooks.mjs "$@"
@@ -78,9 +78,9 @@ Only $LOGIN can open it.
 
 Last step: make every new agent session phone-ready. Add to ~/$RC and open a new terminal:
 
-  claude() { pocket run "\$@"; }
-  codex() { pocket run -- codex "\$@"; }      # if you use Codex
-  gemini() { pocket run -- gemini "\$@"; }    # any other terminal agent works the same way
+  claude() { ~/.local/bin/pocket run "\$@"; }
+  codex() { ~/.local/bin/pocket run -- codex "\$@"; }      # if you use Codex
+  gemini() { ~/.local/bin/pocket run -- gemini "\$@"; }    # any other terminal agent works the same way
 
 Sessions already running keep working; Claude ones show on the phone as view-only.
 EOF
