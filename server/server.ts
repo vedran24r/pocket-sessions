@@ -1,10 +1,13 @@
+import { execFile } from "node:child_process";
+import os from "node:os";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
+import { changedFiles, fileDiff } from "./changes.ts";
 import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
 import { pruneUploads, saveUpload, uploadPath, UPLOADS } from "./uploads.ts";
@@ -78,9 +81,15 @@ function setStatus(session: string, profile: string, status: Status, note?: stri
   return info;
 }
 
-async function pushUnlessAtLaptop(session: string, notice: { title: string; body: string }): Promise<void> {
+function rememberLaunchOptions(profile: string, configDir: string, cwd: unknown): void {
+  (state.profiles ??= {})[profile] ??= configDir;
+  if (configDir) state.profiles[profile] = configDir;
+  if (typeof cwd === "string" && cwd) state.recentDirs = [cwd, ...(state.recentDirs ?? []).filter((dir) => dir !== cwd)].slice(0, 12);
+}
+
+async function pushUnlessAtLaptop(session: string, notice: { title: string; body: string; actions?: { action: string; title: string }[] }): Promise<void> {
   if (tmux.isTmux(session) && (await tmux.secondsSinceLaptopInput(session)) < LAPTOP_ACTIVE_SECONDS) return;
-  await notify({ ...notice, url: `/#/s/${session}`, tag: session });
+  await notify({ ...notice, url: `/#/s/${session}`, tag: session, session });
 }
 
 async function handleHook(session: string, event: any, configDir: string, pid: number): Promise<void> {
@@ -89,6 +98,7 @@ async function handleHook(session: string, event: any, configDir: string, pid: n
   if (event.transcript_path) info.transcript = event.transcript_path;
   if (event.cwd) info.cwd = event.cwd;
   if (event.session_id) info.sessionId = event.session_id;
+  rememberLaunchOptions(profile, configDir, event.cwd);
   info.seenAt = Date.now();
   if (configDir) info.configDir = configDir;
   if (pid > 1) info.pid = pid;
@@ -132,7 +142,11 @@ async function handleHook(session: string, event: any, configDir: string, pid: n
       if (event.notification_type === "idle_prompt") break;
       const message = event.message ?? "Needs your input";
       setStatus(session, profile, "waiting", message);
-      await pushUnlessAtLaptop(session, { title: `⏳ ${name} needs you`, body: message });
+      // A permission prompt can be answered straight from the notification (Android shows the buttons).
+      const actions = event.notification_type === "permission_prompt" && tmux.isTmux(session)
+        ? [{ action: "allow", title: "Allow" }, { action: "deny", title: "Deny" }]
+        : undefined;
+      await pushUnlessAtLaptop(session, { title: `⏳ ${name} needs you`, body: message, actions });
       break;
     }
     case "SessionEnd":
@@ -213,6 +227,37 @@ function processAlive(pid: number | undefined): boolean {
   }
 }
 
+// Sessions waiting on you first, then the ones still working, then the rest by recency.
+const urgency = (status: string) => (status === "waiting" ? 0 : status === "working" ? 1 : 2);
+
+/** Starts an agent in a folder, from the phone. The folder must already exist under your home directory. */
+async function startSession(body: any): Promise<string> {
+  const agent = body.agent === "codex" ? "codex" : "claude";
+  const requested = typeof body.cwd === "string" ? body.cwd.trim().replace(/^~(?=\/|$)/, os.homedir()) : "";
+  const cwd = requested && path.isAbsolute(requested) ? await realpath(requested).catch(() => "") : "";
+  if (!cwd || !(cwd + "/").startsWith(os.homedir() + "/") || !(await stat(cwd).catch(() => undefined))?.isDirectory()) {
+    throw Object.assign(new Error("Pick a folder inside your home directory that exists"), { status: 400 });
+  }
+  const profiles = state.profiles ?? { claude: "" };
+  const profile = agent === "codex" ? "codex" : String(body.profile ?? "claude");
+  if (agent === "claude" && !(profile in profiles)) throw Object.assign(new Error(`Unknown profile ${profile}`), { status: 400 });
+  const slug = path.basename(cwd).toLowerCase().replace(/[^a-z0-9._]+/g, "-").replace(/^-|-$/g, "") || "session";
+  const name = await tmux.uniqueName(`pk-${profile.replace(/[^a-z0-9]/g, "")}-${slug}`);
+  const env: Record<string, string> = {};
+  if (agent === "claude" && profiles[profile]) env.CLAUDE_CONFIG_DIR = profiles[profile];
+  const command = agent === "codex" ? "exec codex" : `exec claude --add-dir ${JSON.stringify(UPLOADS)}`;
+  // A login + interactive shell picks up the user's PATH, nvm, AWS profile etc. from their rc files.
+  await tmux.newSession(name, cwd, env, [process.env.SHELL || "/bin/zsh", "-lic", command], agent);
+  state.sessions[name] = { profile, agent, status: "idle", statusAt: Date.now(), cwd };
+  rememberLaunchOptions(agent === "claude" ? profile : "claude", profiles[profile] ?? "", cwd);
+  save();
+  return name;
+}
+
+function sessionCwd(session: string, live: tmux.TmuxSession[]): string | undefined {
+  return live.find((entry) => entry.name === session)?.path ?? state.sessions[session]?.cwd;
+}
+
 async function listSessions() {
   const live = await tmux.listSessions();
   const liveNames = new Set(live.map((session) => session.name));
@@ -246,7 +291,7 @@ async function listSessions() {
   return [
     ...live.map((session) => describe(session.name, session.path, session.activity * 1000)),
     ...readonly.map((name) => describe(name, undefined, now)),
-  ].sort((a, b) => b.statusAt - a.statusAt);
+  ].sort((a, b) => urgency(a.status) - urgency(b.status) || b.statusAt - a.statusAt);
 }
 
 function openEventStream(req: IncomingMessage, res: ServerResponse, intervalMs: number, tick: (send: (event: string, data: unknown) => void) => Promise<void>, onClose?: () => void) {
@@ -505,6 +550,17 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { "content-type": `image/${path.extname(file).slice(1).replace("jpg", "jpeg")}`, "cache-control": "private, max-age=604800" });
       return void createReadStream(file).pipe(res);
     }
+    if (url.pathname === "/api/sessions" && req.method === "POST") return json(res, 200, { name: await startSession(await readJson(req)) });
+    if (url.pathname === "/api/launch-options" && req.method === "GET") {
+      const hasCodex = await new Promise<boolean>((resolve) => execFile("sh", ["-lc", "command -v codex"], (err) => resolve(!err)));
+      // Also learn from sessions already known, so the lists aren't empty before the next hook fires.
+      for (const info of Object.values(state.sessions)) {
+        if ((info.agent ?? "claude") === "claude" && info.profile) rememberLaunchOptions(info.profile, info.configDir ?? "", undefined);
+      }
+      const live = (await tmux.listSessions()).map((session) => session.path);
+      const dirs = [...new Set([...(state.recentDirs ?? []), ...live, ...Object.values(state.sessions).map((info) => info.cwd ?? "")])].filter(Boolean);
+      return json(res, 200, { profiles: Object.keys(state.profiles ?? { claude: "" }), dirs: dirs.slice(0, 12), codex: hasCodex });
+    }
     if (url.pathname === "/api/sessions" && req.method === "GET") return json(res, 200, await listSessions());
     if (url.pathname === "/api/push/key") return json(res, 200, { publicKey });
     if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
@@ -544,6 +600,21 @@ const server = http.createServer(async (req, res) => {
         if (renamed) await tmux.renamePaneTitle(session, renamed.trim()).catch(() => {});
         if (submit) setStatus(session, profile, "working");
         return json(res, 200, { ok: true });
+      }
+      if (action === "answer" && req.method === "POST") {
+        const { choice } = await readJson(req);
+        const key = await tmux.permissionChoice(session, choice === "allow" ? "allow" : "deny");
+        if (!key) return json(res, 409, { error: "There's no permission question with a one-time answer on screen. Open the session to answer it" });
+        await tmux.sendKey(session, key);
+        if (state.sessions[session]?.status === "waiting") setStatus(session, profile, "working");
+        return json(res, 200, { ok: true });
+      }
+      if (action === "changes" && req.method === "GET") {
+        const cwd = sessionCwd(session, await tmux.listSessions());
+        if (!cwd) return json(res, 404, { error: "Unknown folder for this session" });
+        const file = url.searchParams.get("file");
+        if (file) return json(res, 200, { diff: await fileDiff(cwd, file) });
+        return json(res, 200, { cwd, ...(await changedFiles(cwd)) });
       }
       if (action === "upload" && req.method === "POST") return json(res, 200, { path: await saveUpload(req, session) });
       if (action === "key" && req.method === "POST") {

@@ -105,13 +105,19 @@ function renderHome() {
   };
   void notificationsOn().then((on) => (bell.hidden = on));
 
-  app.replaceChildren(h("header", { class: "bar" }, h("h1", {}, "Pocket"), bell), list);
+  const create = h("button", { class: "new-session", textContent: "＋ New" });
+  create.onclick = () => openNewSession();
+  app.replaceChildren(h("header", { class: "bar" }, h("h1", {}, "Pocket"), bell, create), list);
 
   let timer: number | undefined;
   const refresh = async () => {
     try {
       const sessions = await api<Session[]>("/api/sessions");
       list.replaceChildren(...(sessions.length ? sessions.map(sessionCard) : [emptyState()]));
+      // The home-screen icon shows how many sessions are waiting on you (where the phone supports badges).
+      const waiting = sessions.filter((session) => session.status === "waiting").length;
+      const badge = navigator as Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+      void (waiting ? badge.setAppBadge?.(waiting) : badge.clearAppBadge?.())?.catch(() => {});
     } catch (err) {
       list.replaceChildren(h("p", { class: "muted pad" }, `Can't reach the Mac: ${(err as Error).message}`));
     }
@@ -124,6 +130,59 @@ function renderHome() {
     clearInterval(timer);
     document.removeEventListener("visibilitychange", onVisible);
   };
+}
+
+interface LaunchOptions {
+  profiles: string[];
+  dirs: string[];
+  codex: boolean;
+}
+
+/** Bottom sheet: pick an agent/profile and a folder, start a session on the computer, open it. */
+async function openNewSession(): Promise<void> {
+  let options: LaunchOptions;
+  try {
+    options = await api<LaunchOptions>("/api/launch-options");
+  } catch (err) {
+    toast((err as Error).message);
+    return;
+  }
+  const agents = [...options.profiles.map((profile) => ({ value: `claude:${profile}`, label: profile === "claude" ? "Claude" : `Claude · ${profile}` })), ...(options.codex ? [{ value: "codex:codex", label: "Codex" }] : [])];
+  const agentSelect = h("select", {}, ...agents.map((agent) => h("option", { value: agent.value }, agent.label)));
+  agentSelect.value = localStorage.getItem("pocket-last-agent") ?? agents[0]?.value ?? "claude:claude";
+  const dirSelect = h("select", {}, ...options.dirs.map((dir) => h("option", { value: dir }, dir.replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, "~"))), h("option", { value: "" }, "Other folder…"));
+  const dirInput = h("input", { type: "text", placeholder: "~/path/to/project", hidden: options.dirs.length > 0 });
+  dirSelect.onchange = () => (dirInput.hidden = dirSelect.value !== "");
+  if (!options.dirs.length) dirSelect.hidden = true;
+  const start = h("button", { class: "primary", textContent: "Start session" });
+  const cancel = h("button", { class: "ghost", textContent: "Cancel" });
+  const sheet = h("div", { class: "sheet" },
+    h("h2", {}, "New session"),
+    h("label", {}, "Agent", agentSelect),
+    h("label", {}, "Folder", dirSelect, dirInput),
+    h("div", { class: "sheet-actions" }, cancel, start));
+  const overlay = h("div", { class: "overlay" }, sheet);
+  const close = () => overlay.remove();
+  overlay.onclick = (event) => event.target === overlay && close();
+  cancel.onclick = close;
+  start.onclick = async () => {
+    const [agent, profile] = agentSelect.value.split(":");
+    const cwd = dirSelect.value || dirInput.value.trim();
+    if (!cwd) return toast("Pick a folder");
+    start.disabled = true;
+    start.textContent = "Starting…";
+    try {
+      const { name } = await api<{ name: string }>("/api/sessions", { agent, profile, cwd });
+      localStorage.setItem("pocket-last-agent", agentSelect.value);
+      close();
+      location.hash = `#/s/${name}`;
+    } catch (err) {
+      toast((err as Error).message);
+      start.disabled = false;
+      start.textContent = "Start session";
+    }
+  };
+  document.body.append(overlay);
 }
 
 function emptyState(): HTMLElement {
@@ -269,7 +328,9 @@ function renderSession(name: string) {
 
   const chat = h("div", { class: "chat" });
   const shared = h("div", { class: "shared-note", hidden: true });
-  const tabs = readonly ? undefined : h("nav", { class: "tabs" }, chatTab, termTab);
+  const changesTab = h("button", { class: "tab", textContent: "Changes" });
+  const tabs = readonly ? undefined : h("nav", { class: "tabs" }, chatTab, termTab, changesTab);
+  const changesWrap = h("div", { class: "changes", hidden: true });
   let terminalOnly = false;
   const termWrap = h("div", { class: "term", hidden: true });
   const termInner = h("div", { class: "term-inner" });
@@ -311,6 +372,36 @@ function renderSession(name: string) {
     picker.value = "";
     refreshAttachments();
   };
+  // One-tap replies for the phrases you'd otherwise dictate all day. Long-press (or ✎) to edit; saved on this phone.
+  const DEFAULT_REPLIES = ["continue", "yes, go ahead", "commit and push", "run the tests"];
+  const loadReplies = (): string[] => {
+    try {
+      return JSON.parse(localStorage.getItem("pocket-quick-replies") ?? "null") ?? DEFAULT_REPLIES;
+    } catch {
+      return DEFAULT_REPLIES;
+    }
+  };
+  const replies = h("div", { class: "replies" });
+  const renderReplies = () => {
+    const edit = h("button", { class: "reply edit", textContent: "✎", ariaLabel: "Edit quick replies" });
+    edit.onclick = () => {
+      const next = prompt("Quick replies, separated by | :", loadReplies().join(" | "));
+      if (next === null) return;
+      const list = next.split("|").map((reply) => reply.trim()).filter(Boolean);
+      try {
+        localStorage.setItem("pocket-quick-replies", JSON.stringify(list.length ? list : DEFAULT_REPLIES));
+      } catch {}
+      renderReplies();
+    };
+    replies.replaceChildren(...loadReplies().map((reply) => {
+      const chip = h("button", { class: "reply", textContent: reply });
+      chip.onclick = () => {
+        input.value = reply;
+        void submit();
+      };
+      return chip;
+    }), edit);
+  };
   const keys = h(
     "div",
     { class: "keys" },
@@ -339,9 +430,10 @@ function renderSession(name: string) {
     shared,
     chat,
     termWrap,
+    changesWrap,
     readonly
       ? takeOverBar(name)
-      : h("footer", { class: "composer" }, keys, attachments, h("div", { class: "input-row" }, attach, picker, input, send)),
+      : h("footer", { class: "composer" }, replies, keys, attachments, h("div", { class: "input-row" }, attach, picker, input, send)),
   );
 
   // Chat stream
@@ -353,7 +445,9 @@ function renderSession(name: string) {
   const pending: { text: string; el: HTMLElement }[] = [];
   const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
   const workingText = h("span", { class: "working-text" }, "Working…");
-  const working = h("div", { class: "working", hidden: true }, h("span", { class: "working-dots" }), workingText);
+  const stop = h("button", { class: "stop", textContent: "■ Stop", hidden: true });
+  stop.onclick = () => api(`/api/sessions/${name}/key`, { key: "esc" }).catch((err) => toast(err.message));
+  const working = h("div", { class: "working", hidden: true }, h("span", { class: "working-dots" }), workingText, stop);
   let currentStatus: Status = "idle";
   let activity = "";
   const placeholder = h("p", { class: "muted pad" }, "Waiting for the first message in this session…");
@@ -361,6 +455,7 @@ function renderSession(name: string) {
     chat.append(...pending.map((entry) => entry.el), working);
     const busy = currentStatus === "working" || pending.length > 0;
     working.hidden = !busy;
+    stop.hidden = readonly || currentStatus !== "working";
     workingText.textContent = activity || (currentStatus === "working" ? "Working…" : "Sending…");
   };
   chatSource.addEventListener("chat", (event) => {
@@ -452,15 +547,66 @@ function renderSession(name: string) {
   zoomIn.onclick = () => zoom(1);
   termWrap.prepend(h("div", { class: "zoom-row" }, zoomOut, zoomIn));
 
-  const showTab = (terminal: boolean) => {
-    chatTab.classList.toggle("active", !terminal);
+  const showTab = (view: boolean | "changes") => {
+    const terminal = view === true;
+    const changes = view === "changes";
+    chatTab.classList.toggle("active", !terminal && !changes);
     termTab.classList.toggle("active", terminal);
-    chat.hidden = terminal;
+    changesTab.classList.toggle("active", changes);
+    chat.hidden = terminal || changes;
     termWrap.hidden = !terminal;
+    changesWrap.hidden = !changes;
     terminal ? void openTerminal() : closeTerminal();
+    if (changes) void loadChanges();
   };
   chatTab.onclick = () => showTab(false);
   termTab.onclick = () => showTab(true);
+  changesTab.onclick = () => showTab("changes");
+
+  // Read-only "what did it change" view: git's changed files in the session folder, tap one for its diff.
+  interface ChangedFile { path: string; status: string; added: number; removed: number }
+  const STATUS_NAMES: Record<string, string> = { "??": "new", A: "added", M: "modified", D: "deleted", R: "renamed" };
+  const loadChanges = async () => {
+    changesWrap.replaceChildren(h("p", { class: "muted pad" }, "Loading…"));
+    try {
+      const result = await api<{ repo: boolean; branch?: string; cwd: string; files: ChangedFile[] }>(`/api/sessions/${name}/changes`);
+      if (!result.repo) return changesWrap.replaceChildren(h("p", { class: "muted pad" }, "This folder isn't a git repository, so there's nothing to compare against."));
+      const totals = result.files.reduce((sum, file) => ({ added: sum.added + file.added, removed: sum.removed + file.removed }), { added: 0, removed: 0 });
+      const refresh = h("button", { class: "ghost", textContent: "↻ Refresh" });
+      refresh.onclick = () => void loadChanges();
+      const header = h("div", { class: "changes-head" },
+        h("span", {}, `${result.files.length} file${result.files.length === 1 ? "" : "s"} changed${result.branch ? ` on ${result.branch}` : ""}`),
+        h("span", { class: "plus" }, `+${totals.added}`), h("span", { class: "minus" }, `−${totals.removed}`), refresh);
+      if (!result.files.length) return changesWrap.replaceChildren(header, h("p", { class: "muted pad" }, "No uncommitted changes."));
+      const rows = result.files.map((file) => {
+        const row = h("button", { class: "change-row" },
+          h("span", { class: `change-status s-${file.status === "??" ? "new" : file.status[0]}` }, STATUS_NAMES[file.status] ?? STATUS_NAMES[file.status[0]] ?? file.status),
+          h("span", { class: "change-path" }, file.path),
+          h("span", { class: "plus" }, file.added ? `+${file.added}` : ""), h("span", { class: "minus" }, file.removed ? `−${file.removed}` : ""));
+        row.onclick = () => void showDiff(file.path);
+        return row;
+      });
+      changesWrap.replaceChildren(header, ...rows);
+    } catch (err) {
+      changesWrap.replaceChildren(h("p", { class: "muted pad" }, (err as Error).message));
+    }
+  };
+  const showDiff = async (file: string) => {
+    const back = h("button", { class: "ghost", textContent: "‹ All changes" });
+    back.onclick = () => void loadChanges();
+    changesWrap.replaceChildren(h("div", { class: "changes-head" }, back, h("span", { class: "change-path" }, file)), h("p", { class: "muted pad" }, "Loading…"));
+    try {
+      const { diff } = await api<{ diff: string }>(`/api/sessions/${name}/changes?file=${encodeURIComponent(file)}`);
+      const pre = h("pre", { class: "diff" });
+      for (const line of diff.split("\n")) {
+        const kind = line.startsWith("@@") ? "hunk" : line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : "";
+        pre.append(h("span", { class: kind }, `${line}\n`));
+      }
+      changesWrap.replaceChildren(changesWrap.firstChild!, pre);
+    } catch (err) {
+      toast((err as Error).message);
+    }
+  };
 
   // Composer
   const draftKey = `pocket-draft-${name}`;
@@ -521,6 +667,7 @@ function renderSession(name: string) {
     }
   };
   send.onclick = submit;
+  renderReplies();
   grow();
 
   cleanup = () => {
@@ -533,6 +680,7 @@ function renderSession(name: string) {
 // ---------- routing ----------
 
 function route() {
+  document.querySelectorAll(".overlay").forEach((overlay) => overlay.remove()); // an open sheet belongs to the old page
   cleanup?.();
   cleanup = undefined;
   const match = location.hash.match(/^#\/s\/((?:pk|ro)-[a-z0-9._-]+)$/);

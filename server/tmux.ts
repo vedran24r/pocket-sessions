@@ -102,6 +102,8 @@ export const KEYS: Record<string, string[]> = {
   ctrlc: ["C-c"],
   y: ["-l", "y"],
   n: ["-l", "n"],
+  "4": ["-l", "4"],
+  "5": ["-l", "5"],
   "1": ["-l", "1"],
   "2": ["-l", "2"],
   "3": ["-l", "3"],
@@ -173,6 +175,23 @@ export async function activityLine(session: string): Promise<string> {
     .replace(/\s+\)/, ")")
     .replace(/^[\s│|]+|[\s│|]+$/g, "")
     .slice(0, 120);
+}
+
+// Answers that grant or refuse more than this one request ("keep allowing", "don't ask again", "block … from now on").
+const STICKY = /don'?t ask again|keep allowing|always|from now on|for this session|all /i;
+
+/**
+ * The menu option to press for a one-tap Allow or Deny on Claude's permission menu, or undefined
+ * when no such menu is showing. Picks the narrowest answer: a one-time Yes, or a No that doesn't
+ * block anything for later; never a "don't ask again" option.
+ */
+export async function permissionChoice(session: string, choice: "allow" | "deny"): Promise<string | undefined> {
+  const screen = await run(["capture-pane", "-p", "-t", `=${session}:`]).catch(() => "");
+  if (!/❯\s*1\.\s*\S/.test(screen)) return undefined;
+  const options = [...screen.matchAll(/^\s*(?:❯\s*)?(\d)\.\s+(.+?)\s*$/gm)].map((match) => ({ key: match[1], text: match[2] }));
+  const word = choice === "allow" ? /^yes\b/i : /^no\b/i;
+  const candidates = options.filter((option) => word.test(option.text) && !STICKY.test(option.text));
+  return candidates[0]?.key;
 }
 
 export function killSession(session: string): Promise<string> {

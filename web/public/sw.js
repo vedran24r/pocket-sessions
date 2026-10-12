@@ -1,5 +1,5 @@
 // App shell cache + push notifications. API calls always go to the network.
-const CACHE = "pocket-v2";
+const CACHE = "pocket-v3";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) =>
@@ -49,7 +49,8 @@ self.addEventListener("push", (event) => {
       renotify: true,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      data: { url: notice.url },
+      data: { url: notice.url, session: notice.session },
+      actions: notice.actions ?? [],
     }),
   );
 });
@@ -57,6 +58,16 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const target = event.notification.data?.url ?? "/";
+  const session = event.notification.data?.session;
+  // Allow / Deny buttons answer the permission question without opening the app. If it's gone
+  // (answered on the laptop meanwhile), open the session instead so nothing happens blindly.
+  if ((event.action === "allow" || event.action === "deny") && session) {
+    event.waitUntil(
+      fetch(`/api/sessions/${session}/answer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ choice: event.action }) })
+        .then((response) => (response.ok ? undefined : self.clients.openWindow(target))),
+    );
+    return;
+  }
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
       const open = windows[0];

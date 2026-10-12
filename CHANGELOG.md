@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Allow / Deny on the notification:** answer a permission question from the lock screen (Android). Pocket reads the menu and picks the narrowest answer: a one-time Yes, or a No that blocks nothing for later. It never picks "don't ask again" or "keep allowing". If the question is already gone, it opens the session instead.
+- **Quick replies:** one-tap messages above the keyboard ("continue", "yes, go ahead", "commit and push", "run the tests"). Tap ✎ to edit them; they're saved on the phone.
+- **New session from the phone:** pick the agent (each Claude profile, or Codex) and a recent folder, and it starts there.
+- **Sessions that need you come first,** then working ones. The app icon shows a badge with how many are waiting.
+- **Stop button** on the working line, to interrupt the agent.
+- **Changes tab:** the session folder's changed files, with lines added and removed. Tap a file for its diff. Read-only.
 - Send images from the phone's gallery (📎). They're shrunk on the phone, saved on the computer, and passed to the agent by file path. They show as pictures in the chat. Claude sessions are started with that folder allowed, so reading an image doesn't ask for permission.
 - Sending makes sure the message is actually submitted: Pocket presses Enter again if the text is still sitting in the agent's input line.
 

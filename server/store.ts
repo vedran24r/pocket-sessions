@@ -36,6 +36,10 @@ export interface SessionInfo {
 
 interface State {
   sessions: Record<string, SessionInfo>;
+  /** Claude profiles seen in hooks: label → CLAUDE_CONFIG_DIR ("" = the default ~/.claude). */
+  profiles?: Record<string, string>;
+  /** Folders sessions recently ran in, newest first, for starting a session from the phone. */
+  recentDirs?: string[];
   subscriptions: PushSubscription[];
   vapid?: { publicKey: string; privateKey: string };
 }

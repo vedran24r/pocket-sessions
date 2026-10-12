@@ -20,6 +20,9 @@ export interface Notice {
   body: string;
   url: string;
   tag: string;
+  /** Buttons on the notification (Android): handled by the service worker. */
+  actions?: { action: string; title: string }[];
+  session?: string;
 }
 
 /** Payloads are end-to-end encrypted by the Web Push protocol; the push service can't read them. */
