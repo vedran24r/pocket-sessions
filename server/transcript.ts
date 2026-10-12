@@ -30,7 +30,8 @@ function userText(raw: string): string | null {
     const args = raw.match(/<command-args>([^<]*)<\/command-args>/)?.[1]?.trim();
     return args ? `${command[1]} ${args}` : command[1];
   }
-  if (/^\s*<(local-command|system-reminder|command-)/.test(raw)) return null;
+  // Harness messages injected as user turns, not something the person typed.
+  if (/^\s*<(local-command|system-reminder|command-|task-notification)/.test(raw)) return null;
   if (raw.startsWith("[Request interrupted")) return null;
   return raw.trim() || null;
 }

@@ -1,12 +1,30 @@
 // App shell cache + push notifications. API calls always go to the network.
-const CACHE = "pocket-v1";
+const CACHE = "pocket-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("activate", (event) =>
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()),
+  ),
+);
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) return;
+  // The page itself: network first, so a new build reaches the phone on the next open.
+  // The cache is only the offline fallback. Hashed assets below never change, so cache-first is safe.
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put("/", copy));
+          return response;
+        })
+        .catch(() => caches.match("/")),
+    );
+    return;
+  }
   // Stale-while-revalidate: open instantly from cache, refresh in the background.
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
