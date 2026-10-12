@@ -61,7 +61,7 @@ cmd_run() {
   done < <(env -0)
 
   # @pocket_agent tells the server whether hooks and a transcript exist (claude) or not (anything else).
-  "${T[@]}" new-session -d -s "$session" -c "$PWD" -x "$(tput cols)" -y "$(tput lines)" "${env_args[@]}" "${cmd[@]}" \; \
+  "${T[@]}" new-session -d -s "$session" -c "$PWD" -x "$(tput cols 2>/dev/null || echo 120)" -y "$(tput lines 2>/dev/null || echo 40)" "${env_args[@]}" "${cmd[@]}" \; \
     set-option -t "=$session:" @pocket_agent "$agent"
   attach "$session"
 }

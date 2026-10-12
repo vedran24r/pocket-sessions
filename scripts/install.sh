@@ -28,6 +28,12 @@ die() { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 DONE=()
 MANUAL=()
 manual() { MANUAL+=("$*"); }
+# Shows a path as ~/...; bash 5.2 re-expands a literal ~ inside ${var/pattern/~}, so do it by hand.
+tilde() {
+  local path out=()
+  for path in "$@"; do [[ $path == "$HOME"* ]] && path="~${path#"$HOME"}"; out+=("$path"); done
+  echo "${out[*]}"
+}
 
 # Prompts read from the terminal, so they work under `curl ... | bash` too.
 HAVE_TTY=0
@@ -174,7 +180,7 @@ if ((${#CONFIG_DIRS[@]} == 0)); then
   for dir in "$HOME"/.claude-*; do [[ -f "$dir/settings.json" ]] && CONFIG_DIRS+=("$dir"); done
 fi
 node scripts/install-hooks.mjs "${CONFIG_DIRS[@]}" >/dev/null
-ok "Claude Code hooks installed in: ${CONFIG_DIRS[*]/#$HOME/~}"
+ok "Claude Code hooks installed in: $(tilde "${CONFIG_DIRS[@]}")"
 
 if command -v codex >/dev/null || [[ -d "${CODEX_HOME:-$HOME/.codex}" ]]; then
   node scripts/install-codex.mjs
@@ -232,8 +238,8 @@ fi
 # ---------- 7. shell wrapper ----------
 RC="$HOME/.zshrc"; [[ "${SHELL:-}" == */bash ]] && RC="$HOME/.bashrc"
 if grep -Eqs '>>> pocket-sessions >>>|pocket"? run' "$RC"; then
-  ok "Shell wrapper already in ${RC/#$HOME/~}"
-elif ask "Make every new 'claude' session phone-ready by adding a wrapper to ${RC/#$HOME/~}?"; then
+  ok "Shell wrapper already in $(tilde "$RC")"
+elif ask "Make every new 'claude' session phone-ready by adding a wrapper to $(tilde "$RC")?"; then
   [[ -f "$RC" ]] && cp "$RC" "$RC.bak-pocket"
   {
     echo ""
@@ -242,9 +248,9 @@ elif ask "Make every new 'claude' session phone-ready by adding a wrapper to ${R
     command -v codex >/dev/null && echo 'codex() { "$HOME/.local/bin/pocket" run -- codex "$@"; }'
     echo "# <<< pocket-sessions <<<"
   } >>"$RC"
-  ok "Shell wrapper added to ${RC/#$HOME/~} (backup: ${RC/#$HOME/~}.bak-pocket)"
+  ok "Shell wrapper added to $(tilde "$RC") (backup: $(tilde "$RC").bak-pocket)"
 else
-  manual "Add to ${RC/#$HOME/~}:  claude() { \"\$HOME/.local/bin/pocket\" run \"\$@\"; }"
+  manual "Add to $(tilde "$RC"):  claude() { \"\$HOME/.local/bin/pocket\" run \"\$@\"; }"
 fi
 
 # ---------- summary ----------
