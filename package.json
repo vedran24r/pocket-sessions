@@ -1,6 +1,6 @@
 {
   "name": "pocket-sessions",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Watch and drive your Claude Code sessions from your phone, over your own Tailscale network.",
   "type": "module",

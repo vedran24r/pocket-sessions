@@ -21,7 +21,7 @@ phone (PWA) ──HTTPS over Tailscale──▶ tailscale serve ──▶ pocket
                          tmux -L pocket ──────────────────────┘ Terminal view + typing
 ```
 
-- `claude` becomes a small shell function that starts Claude inside a dedicated tmux server (`tmux -L pocket`). Your terminal attaches to it as usual. Closing the window ends the session, just like before. To leave a session running for the phone without a window, detach instead (`Ctrl-b d`), or set `POCKET_KEEP_ON_CLOSE=1`.
+- `claude` becomes a small shell function that starts Claude inside a dedicated tmux server (`tmux -L pocket`). Your terminal attaches to it as usual. Closing the window ends the session and it disappears from the phone within a few seconds, just like before. To leave a session running for the phone without a window, detach instead (`Ctrl-b d`), or set `POCKET_KEEP_ON_CLOSE=1`.
 - Claude Code **hooks** tell the server when a session starts, works, finishes or waits for permission. The server turns that into status dots and Web Push notifications.
 - **Chat view:** the conversation as readable bubbles, built from Claude's transcript file.
 - **Terminal view:** the actual screen, for menus and prompts. Quick keys: `Esc 1 2 3 ⏎ ↑ ↓ ⇧Tab ^C`.

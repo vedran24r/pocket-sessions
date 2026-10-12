@@ -23,12 +23,11 @@ profile() {
   fi
 }
 
-# Closing the terminal window hangs up this script (SIGHUP) and ends the session with it.
-# A deliberate detach (prefix + d) exits normally and leaves the session running for the phone.
+# Closing the window ends the session: tmux.conf turns on destroy-unattached whenever a terminal
+# attaches, unless the session is marked @pocket_keep.
 attach() {
-  if [[ -n "${TMUX:-}" ]]; then "${T[@]}" switch-client -t "=$1"; return; fi
-  [[ "${POCKET_KEEP_ON_CLOSE:-0}" == 1 ]] || trap '"${T[@]}" kill-session -t "=$1" 2>/dev/null; exit 0' HUP
-  "${T[@]}" attach-session -t "=$1"
+  if [[ "${POCKET_KEEP_ON_CLOSE:-0}" == 1 ]]; then "${T[@]}" set-option -t "=$1:" @pocket_keep 1; fi
+  if [[ -n "${TMUX:-}" ]]; then "${T[@]}" switch-client -t "=$1"; else exec "${T[@]}" attach-session -t "=$1"; fi
 }
 
 cmd_run() {

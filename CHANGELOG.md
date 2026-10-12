@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.3 — 2026-10-12
+
+- Closing a terminal window reliably ends its session, and the phone drops it within seconds. tmux itself now does this (destroy-unattached, switched on when a terminal attaches), so it also covers sessions started before this version, once they're re-attached. `Ctrl-b d` still detaches and keeps a session running for the phone.
 ## 1.0.2 — 2026-10-12
 
 - The `claude()` / `codex()` wrappers call `~/.local/bin/pocket` by full path, so they work on a fresh Mac where `~/.local/bin` isn't on the PATH.
