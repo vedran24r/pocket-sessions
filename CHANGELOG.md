@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Links in chat messages are tappable and open in a new tab: bare web addresses and `[text](link)`.
 - **Allow / Deny on the notification:** answer a permission question from the lock screen (Android). Pocket reads the menu and picks the narrowest answer: a one-time Yes, or a No that blocks nothing for later. It never picks "don't ask again" or "keep allowing". If the question is already gone, it opens the session instead.
 - **Quick replies:** one-tap messages above the keyboard ("continue", "yes, go ahead", "commit and push", "run the tests"). Tap ✎ to edit them; they're saved on the phone.
 - **New session from the phone:** pick the agent (each Claude profile, or Codex) and a recent folder, and it starts there.

@@ -152,3 +152,4 @@ textarea:focus { border-color: var(--accent); }
 .diff .add { color: var(--done); background: color-mix(in srgb, var(--done) 12%, transparent); }
 .diff .del { color: var(--waiting); background: color-mix(in srgb, var(--waiting) 12%, transparent); }
 .diff .hunk { color: #8fb7ff; }
+.msg a { color: #8fb7ff; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }

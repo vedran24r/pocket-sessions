@@ -243,13 +243,32 @@ async function uploadImage(session: string, file: File): Promise<string> {
 
 // ---------- session ----------
 
+const LINK_ATTRS = 'target="_blank" rel="noopener noreferrer"';
+
+/** Makes web links tappable: [text](url) and bare http(s) addresses. Runs on already-escaped text. */
+function linkify(html: string): string {
+  return html
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)"]+)\)/g, (_, label, url) => `<a href="${url}" ${LINK_ATTRS}>${label}</a>`)
+    .replace(/(^|[\s(>])(https?:\/\/[^\s<"]+)/g, (_, before, url: string) => {
+      // Sentence punctuation after a link belongs to the sentence, not the address.
+      const trailing = url.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
+      const clean = url.slice(0, url.length - trailing.length);
+      return `${before}<a href="${clean}" ${LINK_ATTRS}>${clean}</a>${trailing}`;
+    });
+}
+
 function inlineMarkdown(text: string): DocumentFragment {
-  // Escape first, then a tiny subset: fenced code, inline code, bold. Enough for Claude's replies.
+  // Escape first, then a tiny subset: fenced code, inline code, bold, links. Enough for Claude's replies.
   const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = escaped
-    .replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code) => `<pre>${code}</pre>`)
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+    // Code blocks are set aside so addresses inside them stay plain text.
+    .split(/(```[^\n]*\n[\s\S]*?```)/g)
+    .map((part) =>
+      part.startsWith("```")
+        ? part.replace(/```[^\n]*\n([\s\S]*?)```/, (_, code) => `<pre>${code}</pre>`)
+        : linkify(part.replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")),
+    )
+    .join("");
   return document.createRange().createContextualFragment(html);
 }
 
