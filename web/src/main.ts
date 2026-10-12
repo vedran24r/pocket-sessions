@@ -197,7 +197,7 @@ function takeOverBar(name: string): HTMLElement {
 
 function renderSession(name: string) {
   const readonly = name.startsWith("ro-");
-  const title = readonly ? "…" : name.replace(/^cc-[a-z0-9]+-/, "");
+  const title = readonly ? "…" : name.replace(/^pk-[a-z0-9]+-/, "");
   const titleEl = h("h1", { class: "session-title" }, title);
   const statusEl = h("span", { class: "status-pill" }, "…");
   const chatTab = h("button", { class: "tab active", textContent: "Chat" });
@@ -205,6 +205,8 @@ function renderSession(name: string) {
   const back = h("a", { class: "back", href: "#/", textContent: "‹" });
 
   const chat = h("div", { class: "chat" });
+  const tabs = readonly ? undefined : h("nav", { class: "tabs" }, chatTab, termTab);
+  let terminalOnly = false;
   const termWrap = h("div", { class: "term", hidden: true });
   const termInner = h("div", { class: "term-inner" });
   termWrap.append(termInner);
@@ -216,6 +218,8 @@ function renderSession(name: string) {
     { class: "keys" },
     ...[
       ["esc", "Esc"],
+      ["y", "y"],
+      ["n", "n"],
       ["1", "1"],
       ["2", "2"],
       ["3", "3"],
@@ -233,7 +237,7 @@ function renderSession(name: string) {
 
   app.replaceChildren(
     h("header", { class: "bar" }, back, titleEl, statusEl),
-    ...(readonly ? [] : [h("nav", { class: "tabs" }, chatTab, termTab)]),
+    ...(tabs ? [tabs] : []),
     chat,
     termWrap,
     readonly
@@ -252,25 +256,46 @@ function renderSession(name: string) {
     if (stick) chat.scrollTop = chat.scrollHeight;
   });
   chatSource.addEventListener("status", (event) => {
-    const { status, note, title: liveTitle } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string };
+    const { status, note, title: liveTitle, agent } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string };
     if (liveTitle) titleEl.textContent = liveTitle;
     statusEl.textContent = STATUS_LABEL[status];
     statusEl.className = `status-pill status-${status}`;
     statusEl.title = note ?? "";
+    // Agents other than Claude have no transcript, so the terminal is the whole view.
+    if (agent && agent !== "claude" && !terminalOnly) {
+      terminalOnly = true;
+      tabs?.remove();
+      showTab(true);
+    }
   });
   if (!chat.childElementCount) chat.append(h("p", { class: "muted pad" }, "Waiting for the first message in this session…"));
 
   // Terminal snapshot stream — only while that tab is open, it changes constantly.
   let term: Terminal | undefined;
   let screenSource: EventSource | undefined;
-  let fontSize = Number(localStorage.getItem("pocket-term-font") ?? 9);
+  let fontSize = Number(localStorage.getItem("pocket-term-font") ?? 11);
+  const fontFamily = "ui-monospace, Menlo, monospace";
+  // How many columns and rows fit the phone at this font size. Measured once per open, not on
+  // every resize: the on-screen keyboard changes the height and would reflow the agent on each tap.
+  const phoneGrid = () => {
+    const probe = h("span", { textContent: "W".repeat(40) });
+    probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${fontSize}px ${fontFamily}`;
+    document.body.append(probe);
+    const charWidth = probe.getBoundingClientRect().width / 40;
+    probe.remove();
+    const cols = Math.floor((termWrap.clientWidth - 16) / charWidth);
+    const rows = Math.floor((window.innerHeight - termWrap.getBoundingClientRect().top - 150) / Math.ceil(fontSize * 1.2));
+    return { cols: Math.max(20, cols), rows: Math.max(10, rows) };
+  };
   const openTerminal = async () => {
     // xterm is most of the bundle; load it only when the Terminal tab is opened.
     const [{ Terminal }] = await Promise.all([import("@xterm/xterm"), import("@xterm/xterm/css/xterm.css")]);
     if (chat.hidden === false) return; // switched back to Chat while loading
-    term ??= new Terminal({ fontSize, disableStdin: true, scrollback: 0, cursorBlink: false, theme: { background: "#14120f" }, fontFamily: "ui-monospace, Menlo, monospace" });
+    term ??= new Terminal({ fontSize, disableStdin: true, scrollback: 0, cursorBlink: false, theme: { background: "#14120f" }, fontFamily });
     if (!term.element) term.open(termInner);
-    screenSource = new EventSource(`/api/sessions/${name}/screen`);
+    const { cols, rows } = phoneGrid();
+    screenSource?.close();
+    screenSource = new EventSource(`/api/sessions/${name}/screen?cols=${cols}&rows=${rows}`);
     screenSource.addEventListener("screen", (event) => {
       const screen = JSON.parse((event as MessageEvent).data) as Screen;
       if (term!.cols !== screen.cols || term!.rows !== screen.rows) term!.resize(screen.cols, screen.rows);
@@ -285,6 +310,7 @@ function renderSession(name: string) {
     fontSize = Math.min(16, Math.max(5, fontSize + delta));
     localStorage.setItem("pocket-term-font", String(fontSize));
     if (term) term.options.fontSize = fontSize;
+    if (screenSource) void openTerminal(); // refit the session to the new font size
   };
   const zoomOut = h("button", { class: "zoom", textContent: "A−" });
   const zoomIn = h("button", { class: "zoom", textContent: "A+" });
@@ -344,7 +370,7 @@ function renderSession(name: string) {
 function route() {
   cleanup?.();
   cleanup = undefined;
-  const match = location.hash.match(/^#\/s\/(cc-[a-z0-9._-]+)$/);
+  const match = location.hash.match(/^#\/s\/((?:pk|ro)-[a-z0-9._-]+)$/);
   match ? renderSession(match[1]) : renderHome();
 }
 

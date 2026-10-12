@@ -14,7 +14,7 @@ session=""
 if [[ -n "${TMUX_PANE:-}" ]]; then
   TMUX_BIN="$(command -v tmux || echo /opt/homebrew/bin/tmux)"
   session="$("$TMUX_BIN" display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)"
-  [[ "$session" == cc-* ]] || session=""
+  [[ "$session" == pk-* ]] || session=""
 fi
 if [[ -z "$session" ]]; then
   id="$(printf '%s' "$payload" | sed -n 's/.*"session_id" *: *"\([0-9a-fA-F-]\{8\}\).*/\1/p' | head -1 | tr 'A-F' 'a-f')"

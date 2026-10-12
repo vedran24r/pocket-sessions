@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# pocket — run Claude Code inside the pocket tmux server so the phone can see and type into it.
+# pocket — run an AI coding agent inside the pocket tmux server so the phone can see and type into it.
 #
-#   pocket run [claude args...]    start a new session for this directory (what the `claude` wrapper calls)
+#   pocket run [claude args...]    Claude Code session for this directory (what the `claude` wrapper calls)
+#   pocket run -- <cmd> [args...]  any other terminal agent: codex, gemini, aider, opencode, ...
 #   pocket attach <name>           reattach to a session, e.g. after closing its terminal window
 #   pocket ls                      list sessions
 #
-# The profile comes from POCKET_PROFILE, else from CLAUDE_CONFIG_DIR (~/.claude-game → "game"), else "claude".
+# Claude's label comes from POCKET_PROFILE, else CLAUDE_CONFIG_DIR (~/.claude-game → "game"), else "claude".
 set -euo pipefail
 
 POCKET_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -26,20 +27,24 @@ attach() {
 }
 
 cmd_run() {
-  # Inside some tmux pane already, or not a terminal (scripts, pipes): run claude directly.
-  if [[ -n "${TMUX:-}" || ! -t 0 || ! -t 1 ]]; then exec "$CLAUDE_BIN" "$@"; fi
-  # One-shot commands (`claude --version`, `claude -p ...`, `claude mcp list`) aren't sessions.
-  case "${1:-}" in
-    mcp | plugin | plugins | update | upgrade | doctor | install | config | setup-token | migrate-installer | auth | agents | remote-control | rc)
-      exec "$CLAUDE_BIN" "$@" ;;
-  esac
-  local arg
-  for arg in "$@"; do
-    case "$arg" in -p | --print | -v | --version | -h | --help) exec "$CLAUDE_BIN" "$@" ;; esac
-  done
+  local agent label cmd
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+    [[ $# -gt 0 ]] || { echo "usage: pocket run -- <command> [args...]" >&2; exit 1; }
+    cmd=("$@")
+    agent="$(basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+    label="$agent"
+  else
+    cmd=("$CLAUDE_BIN" "$@")
+    agent="claude"
+    label="$(profile)"
+  fi
 
+  # Inside some tmux pane already, or not a terminal (scripts, pipes): run it directly.
+  if [[ -n "${TMUX:-}" || ! -t 0 || ! -t 1 ]]; then exec "${cmd[@]}"; fi
+  if [[ "$agent" == "claude" ]]; then cmd_run_claude_passthrough "$@"; fi
   local base session n=1
-  base="cc-$(profile)-$(slug "$(basename "$PWD")")"
+  base="pk-$label-$(slug "$(basename "$PWD")")"
   session="$base"
   while "${T[@]}" has-session -t "=$session" 2>/dev/null; do n=$((n + 1)); session="$base-$n"; done
 
@@ -51,14 +56,27 @@ cmd_run() {
     env_args+=(-e "$kv")
   done < <(env -0)
 
-  "${T[@]}" new-session -d -s "$session" -c "$PWD" -x "$(tput cols)" -y "$(tput lines)" "${env_args[@]}" \
-    "$CLAUDE_BIN" "$@"
+  # @pocket_agent tells the server whether hooks and a transcript exist (claude) or not (anything else).
+  "${T[@]}" new-session -d -s "$session" -c "$PWD" -x "$(tput cols)" -y "$(tput lines)" "${env_args[@]}" "${cmd[@]}" \; \
+    set-option -t "=$session:" @pocket_agent "$agent"
   attach "$session"
+}
+
+# One-shot commands (`claude --version`, `claude -p ...`, `claude mcp list`) aren't sessions.
+cmd_run_claude_passthrough() {
+  case "${1:-}" in
+    mcp | plugin | plugins | update | upgrade | doctor | install | config | setup-token | migrate-installer | auth | agents | remote-control | rc)
+      exec "$CLAUDE_BIN" "$@" ;;
+  esac
+  local arg
+  for arg in "$@"; do
+    case "$arg" in -p | --print | -v | --version | -h | --help) exec "$CLAUDE_BIN" "$@" ;; esac
+  done
 }
 
 case "${1:-}" in
   run) shift; cmd_run "$@" ;;
   attach) attach "${2:?usage: pocket attach <session>}" ;;
-  ls) "${T[@]}" list-sessions -F '#{session_name}  #{?session_attached,(attached),}' 2>/dev/null | grep '^cc-' || echo "no sessions" ;;
+  ls) "${T[@]}" list-sessions -F '#{session_name}  #{?session_attached,(attached),}' 2>/dev/null | grep '^pk-' || echo "no sessions" ;;
   *) sed -n '3,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

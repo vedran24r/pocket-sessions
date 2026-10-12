@@ -30,6 +30,7 @@ const LAPTOP_ACTIVE_SECONDS = 90;
 const TOKEN = hookToken();
 
 type Listener = () => void;
+const agentOf = new Map<string, string>();
 const statusListeners = new Map<string, Set<Listener>>();
 
 function profileOf(session: string): string {
@@ -39,7 +40,7 @@ function profileOf(session: string): string {
 function short(session: string): string {
   const cwd = state.sessions[session]?.cwd;
   if (!tmux.isTmux(session) && cwd) return path.basename(cwd);
-  return session.replace(/^(cc|ro)-[a-z0-9]+-/, "");
+  return session.replace(/^(pk|ro)-[a-z0-9]+-/, "");
 }
 
 function setStatus(session: string, profile: string, status: Status, note?: string): SessionInfo {
@@ -121,7 +122,7 @@ async function takeOver(session: string): Promise<string> {
   if (!info?.sessionId || !info.cwd) throw Object.assign(new Error("Not enough known about this session yet — wait for its next message."), { status: 409 });
   const profile = profileOf(session);
   const slug = path.basename(info.cwd).toLowerCase().replace(/[^a-z0-9._]+/g, "-").replace(/^-|-$/g, "") || "session";
-  const name = await tmux.uniqueName(`cc-${profile}-${slug}`);
+  const name = await tmux.uniqueName(`pk-${profile}-${slug}`);
   const shell = process.env.SHELL || "/bin/zsh";
   // A login + interactive shell picks up the user's PATH, nvm, AWS profile etc. from their rc files.
   await tmux.newSession(name, info.cwd, info.configDir ? { CLAUDE_CONFIG_DIR: info.configDir } : {}, [
@@ -153,8 +154,10 @@ async function listSessions() {
       note: info?.note,
       cwd: cwd ?? info?.cwd ?? "",
       readonly: !tmux.isTmux(name),
+      agent: agentOf.get(name) ?? "claude",
     };
   };
+  for (const session of live) agentOf.set(session.name, session.agent);
   const readonly = Object.keys(state.sessions).filter((name) => !tmux.isTmux(name) && !state.sessions[name].movedTo);
   return [
     ...live.map((session) => describe(session.name, session.path, session.activity * 1000)),
@@ -195,7 +198,7 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
 
   const sendStatus = (send: (event: string, data: unknown) => void) => {
     const info = state.sessions[session];
-    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: short(session) };
+    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: short(session), agent: agentOf.get(session) ?? "claude" };
     const key = JSON.stringify(status);
     if (key !== lastStatus) {
       lastStatus = key;
@@ -204,6 +207,7 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
   };
 
   let pushStatus: Listener = () => {};
+  if (!agentOf.has(session)) void listSessions();
   openEventStream(
     req,
     res,
@@ -227,9 +231,11 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
   listeners.add(listener);
 }
 
-function screenStream(req: IncomingMessage, res: ServerResponse, session: string) {
+function screenStream(req: IncomingMessage, res: ServerResponse, session: string, fit?: { cols: number; rows: number }) {
   let last = "";
+  let ticks = 0;
   openEventStream(req, res, 500, async (send) => {
+    if (fit && ticks++ % 4 === 0) await tmux.fitToPhone(session, fit.cols, fit.rows);
     const screen = await tmux.captureScreen(session);
     const key = `${screen.cols}x${screen.rows}:${screen.cursorX},${screen.cursorY}:${screen.data}`;
     if (key !== last) {
@@ -283,6 +289,52 @@ function allowed(req: IncomingMessage): boolean {
   return ALLOWED_USERS.includes(login);
 }
 
+/**
+ * Agents without hooks (anything but Claude) get their status from the screen: output that keeps
+ * changing means working; quiet for QUIET_MS after at least MIN_ACTIVE_MS of activity means it
+ * finished or is waiting for an answer. The minimum keeps a typing echo from counting as a run.
+ */
+const QUIET_MS = 8000;
+const MIN_ACTIVE_MS = 4000;
+const screenWatch = new Map<string, { last: string; changedAt: number; activeSince: number }>();
+
+async function watchQuietAgents(): Promise<void> {
+  const live = (await tmux.listSessions()).filter((session) => session.agent !== "claude");
+  const now = Date.now();
+  for (const name of screenWatch.keys()) if (!live.some((session) => session.name === name)) screenWatch.delete(name);
+  for (const session of live) {
+    agentOf.set(session.name, session.agent);
+    const screen = await tmux.captureScreen(session.name).catch(() => undefined);
+    if (!screen) continue;
+    const watch = screenWatch.get(session.name);
+    if (!watch) {
+      screenWatch.set(session.name, { last: screen.data, changedAt: now, activeSince: 0 });
+      continue;
+    }
+    if (screen.data !== watch.last) {
+      watch.last = screen.data;
+      watch.changedAt = now;
+      watch.activeSince ||= now;
+      if (state.sessions[session.name]?.status !== "working") setStatus(session.name, profileOf(session.name), "working");
+    } else if (watch.activeSince && now - watch.changedAt > QUIET_MS) {
+      const ranFor = watch.changedAt - watch.activeSince;
+      watch.activeSince = 0;
+      setStatus(session.name, profileOf(session.name), "done");
+      if (ranFor >= MIN_ACTIVE_MS) {
+        await pushUnlessAtLaptop(session.name, { title: `✅ ${short(session.name)} went quiet`, body: `${session.agent} finished or is waiting for you` });
+      }
+    }
+  }
+}
+
+let watching = false;
+setInterval(async () => {
+  if (watching) return;
+  watching = true;
+  await watchQuietAgents().catch((err) => console.error("watch failed", err));
+  watching = false;
+}, 2000);
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const parts = url.pathname.split("/").filter(Boolean);
@@ -322,7 +374,12 @@ const server = http.createServer(async (req, res) => {
       if (action === "chat" && req.method === "GET") return chatStream(req, res, session);
       if (action === "takeover" && req.method === "POST") return json(res, 200, { name: await takeOver(session) });
       if (!tmux.isTmux(session)) return json(res, 409, { error: "This session runs outside pocket, so it's read-only. Restart it with `claude --continue` to type from the phone." });
-      if (action === "screen" && req.method === "GET") return screenStream(req, res, session);
+      if (action === "screen" && req.method === "GET") {
+        const cols = Number(url.searchParams.get("cols"));
+        const rows = Number(url.searchParams.get("rows"));
+        const fit = cols >= 20 && cols <= 400 && rows >= 8 && rows <= 200 ? { cols, rows } : undefined;
+        return screenStream(req, res, session, fit);
+      }
       if (action === "send" && req.method === "POST") {
         const { text, submit = true } = await readJson(req);
         if (typeof text !== "string" || !text.trim()) return json(res, 400, { error: "empty" });

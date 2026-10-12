@@ -1,6 +1,6 @@
 # Pocket
 
-**Your Claude Code sessions on your phone.** See every running session live, scroll the conversation, reply by voice, answer permission prompts, and get a push notification when a session finishes or needs you.
+**Your AI coding agents on your phone.** See every running session live, scroll the conversation, reply by voice, answer prompts, and get a push notification when a session finishes or needs you. Claude Code gets the richest integration; Codex, Gemini CLI, Aider, OpenCode or any other terminal agent works too.
 
 The use case: you have three or four Claude Code sessions going, you step away for coffee, and they finish one by one. With Pocket you check your phone, send the next instruction to each, put the phone away, and the work keeps going.
 
@@ -27,6 +27,29 @@ phone (PWA) ──HTTPS over Tailscale──▶ tailscale serve ──▶ pocket
 - **Terminal view:** the actual screen, for menus and prompts. Quick keys: `Esc 1 2 3 ⏎ ↑ ↓ ⇧Tab ^C`.
 - Typed or dictated text is pasted with bracketed paste, so a multi-line message stays one message.
 - Sessions that were already running before you installed Pocket, or started outside it, still appear: **view only**, with chat and notifications. Restart one with `claude --continue` to make it typeable.
+
+## Other agents
+
+Any terminal program can run under Pocket:
+
+```bash
+pocket run -- codex
+pocket run -- gemini
+pocket run -- aider --model sonnet
+```
+
+Add a wrapper like `codex() { pocket run -- codex "$@"; }` to make it automatic.
+
+| | Claude Code | Any other agent |
+|---|---|---|
+| Terminal view, typing, quick keys | ✅ | ✅ |
+| Fits the terminal to the phone while the laptop is detached | ✅ | ✅ |
+| Push when finished | ✅ from hooks | ✅ when the screen goes quiet after working |
+| Push when it asks for permission | ✅ | covered by the "went quiet" push |
+| Chat view (readable conversation) | ✅ | — terminal only, for now |
+| Continue a session started outside Pocket | ✅ | — |
+
+Richer adapters (a chat view and exact notifications for Codex and friends) are the next step. PRs welcome.
 
 ## Requirements
 

@@ -9,9 +9,9 @@ const BASE = ["-L", "pocket", "-f", CONF];
 // tmux rewrites tabs in format output when the locale isn't UTF-8, so use a printable separator.
 const SEP = "|:|";
 
-/** cc-* live in the pocket tmux server; ro-* are sessions running elsewhere, known only from hooks. */
-export const SESSION_RE = /^(cc|ro)-[a-z0-9._-]+$/;
-export const isTmux = (session: string) => session.startsWith("cc-");
+/** pk-* live in the pocket tmux server; ro-* are sessions running elsewhere, known only from hooks. */
+export const SESSION_RE = /^(pk|ro)-[a-z0-9._-]+$/;
+export const isTmux = (session: string) => session.startsWith("pk-");
 
 function run(args: string[], stdin?: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -24,6 +24,8 @@ function run(args: string[], stdin?: string): Promise<string> {
 
 export interface TmuxSession {
   name: string;
+  /** "claude" (hooks + transcript available) or the command name of any other agent. */
+  agent: string;
   attached: boolean;
   activity: number;
   path: string;
@@ -32,16 +34,16 @@ export interface TmuxSession {
 export async function listSessions(): Promise<TmuxSession[]> {
   let out: string;
   try {
-    out = await run(["list-sessions", "-F", ["#{session_name}", "#{session_attached}", "#{session_activity}", "#{pane_current_path}"].join(SEP)]);
+    out = await run(["list-sessions", "-F", ["#{session_name}", "#{session_attached}", "#{session_activity}", "#{pane_current_path}", "#{@pocket_agent}"].join(SEP)]);
   } catch {
     return []; // no tmux server running yet
   }
   return out
     .split("\n")
-    .filter((line) => line.startsWith("cc-"))
+    .filter((line) => line.startsWith("pk-"))
     .map((line) => {
-      const [name, attached, activity, cwd] = line.split(SEP);
-      return { name, attached: attached !== "0", activity: Number(activity), path: cwd };
+      const [name, attached, activity, cwd, agent] = line.split(SEP);
+      return { name, agent: agent || "claude", attached: attached !== "0", activity: Number(activity), path: cwd };
     });
 }
 
@@ -82,6 +84,8 @@ export const KEYS: Record<string, string[]> = {
   tab: ["Tab"],
   stab: ["BTab"],
   ctrlc: ["C-c"],
+  y: ["-l", "y"],
+  n: ["-l", "n"],
   "1": ["-l", "1"],
   "2": ["-l", "2"],
   "3": ["-l", "3"],
@@ -114,7 +118,18 @@ export async function uniqueName(base: string): Promise<string> {
 
 export async function newSession(name: string, cwd: string, env: Record<string, string>, command: string[]): Promise<void> {
   const envArgs = Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
-  await run(["new-session", "-d", "-s", name, "-c", cwd, "-x", "100", "-y", "40", ...envArgs, ...command]);
+  await run(["new-session", "-d", "-s", name, "-c", cwd, "-x", "100", "-y", "40", ...envArgs, ...command, ";", "set-option", "-t", `=${name}:`, "@pocket_agent", "claude"]);
+}
+
+/**
+ * While no terminal is attached, size the window to the phone so TUIs reflow instead of
+ * rendering 120 columns at an unreadable font size. tmux.conf hands the size back to the
+ * terminal as soon as one attaches.
+ */
+export async function fitToPhone(session: string, cols: number, rows: number): Promise<void> {
+  const clients = await run(["list-clients", "-t", `=${session}`, "-F", "x"]).catch(() => "");
+  if (clients.trim()) return;
+  await run(["resize-window", "-t", `=${session}:`, "-x", String(cols), "-y", String(rows)]);
 }
 
 export function killSession(session: string): Promise<string> {
