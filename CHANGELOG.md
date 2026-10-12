@@ -1,10 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- A message you send shows in the chat at once ("sending…"), including one typed while the agent is busy. That kind is queued by Claude and used to be missing from the chat entirely.
-- While the agent works, the chat shows its live status line, e.g. "✻ Determining… (8s · ↓ 89 tokens)" or Codex's "Working (8s)".
-
 ## 1.0.0 — 2026-10-12
 
 First release.
@@ -14,6 +9,8 @@ First release.
   - a session list, by conversation name, with live status
   - a Chat view and a Terminal view
   - a composer made for voice dictation, and quick keys
+- A message you send shows in the chat at once ("sending…"), including one typed while the agent is busy. That kind is queued by Claude and used to be missing from the chat entirely.
+- While the agent works, the chat shows its live status line, e.g. "✻ Determining… (8s · ↓ 89 tokens)" or Codex's "Working (8s)".
 - Push notifications when a session finishes a turn or needs you. None are sent while you're typing on the laptop.
 - Closing a terminal window ends its session, and the phone drops it within seconds. Detach with `Ctrl-b d` to keep a session running for the phone.
 - Sessions started outside Pocket appear view-only. **Continue on phone** starts a typeable copy, and shows the `pocket attach` command to open that copy on the laptop too.
