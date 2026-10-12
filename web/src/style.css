@@ -78,7 +78,7 @@ pre { background: #0d0c0a; padding: 8px 10px; border-radius: 8px; overflow-x: au
 .term { flex: 1; overflow: auto; padding: 6px; display: flex; flex-direction: column; }
 .term-inner { width: max-content; }
 /* Vertical swipes are sent to the agent as scroll steps; the browser keeps sideways panning. */
-.term-inner .xterm { touch-action: pan-x; }
+.term-inner .xterm, .term-inner .xterm * { touch-action: pan-x; }
 .zoom-row { display: flex; gap: 6px; justify-content: flex-end; padding-bottom: 6px; position: sticky; left: 0; }
 .zoom { padding: 2px 10px; font-size: 13px; }
 

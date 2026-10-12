@@ -463,8 +463,32 @@ const QUIET_MS = 8000;
 const MIN_ACTIVE_MS = 4000;
 const screenWatch = new Map<string, { last: string; changedAt: number; activeSince: number }>();
 
+/**
+ * Claude reports finishing through its Stop hook, but an interrupt (Esc, Ctrl-C) fires no hook, so a
+ * stopped session would show "working" until its next turn. While working, Claude always shows a
+ * busy line ("✻ Thinking… (12s)"); when that has been gone for a few checks in a row, it stopped.
+ */
+const STOPPED_CHECKS = 3;
+const missingBusyLine = new Map<string, number>();
+
+async function checkStillWorking(session: string): Promise<void> {
+  if (state.sessions[session]?.status !== "working") {
+    missingBusyLine.delete(session);
+    return;
+  }
+  const busy = await tmux.activityLine(session);
+  const misses = busy ? 0 : (missingBusyLine.get(session) ?? 0) + 1;
+  missingBusyLine.set(session, misses);
+  if (misses >= STOPPED_CHECKS) {
+    missingBusyLine.delete(session);
+    setStatus(session, profileOf(session), "done", "stopped");
+  }
+}
+
 async function watchQuietAgents(): Promise<void> {
-  const live = (await tmux.listSessions()).filter((session) => session.agent !== "claude");
+  const all = await tmux.listSessions();
+  for (const session of all) if (session.agent === "claude") await checkStillWorking(session.name);
+  const live = all.filter((session) => session.agent !== "claude");
   const now = Date.now();
   for (const name of screenWatch.keys()) if (!live.some((session) => session.name === name)) screenWatch.delete(name);
   for (const session of live) {
@@ -623,6 +647,10 @@ const server = http.createServer(async (req, res) => {
         const { key } = await readJson(req);
         if (!(key in tmux.KEYS)) return json(res, 400, { error: "unknown key" });
         await tmux.sendKey(session, key);
+        // An interrupt from the phone: confirm it stopped quickly rather than waiting for the watcher.
+        if ((key === "esc" || key === "ctrlc") && state.sessions[session]?.status === "working" && agentOf.get(session) === "claude") {
+          for (const delay of [1200, 2400, 3600]) setTimeout(() => void checkStillWorking(session), delay);
+        }
         if (state.sessions[session]?.status === "waiting" && ["1", "2", "3", "enter"].includes(key)) {
           setStatus(session, profile, "working");
         }

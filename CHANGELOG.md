@@ -18,7 +18,7 @@ First release.
 - Session list by conversation name with live status. Sessions that need you come first, and the app icon shows a badge with how many are waiting.
 - Chat view, Terminal view, and a **Changes** tab: the session folder's changed files with lines added and removed, plus a diff per file.
 - A message you send shows at once ("sending…"), including one typed while the agent is busy. Pocket makes sure it's actually submitted.
-- While the agent works, the chat shows its live status line (e.g. "✻ Determining… (8s · ↓ 89 tokens)"), with a **Stop** button.
+- While the agent works, the chat shows its live status line (e.g. "✻ Determining… (8s · ↓ 89 tokens)"), with a **Stop** button. Once it stops (finished, Stop, Esc or Ctrl-C), the line goes away within seconds.
 - A message box made for voice dictation, quick keys, and one-tap **quick replies** ("continue", "commit and push"…) that you can edit.
 - **Tap and swipe in the Terminal tab:** a tap is a click and a vertical swipe scrolls, so menus like `/status` and `/config` work by touch. It only applies when the program on screen accepts mouse input.
 - **Images** from the gallery: shrunk on the phone and passed to the agent; they show as pictures in the chat.

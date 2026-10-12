@@ -583,36 +583,78 @@ function renderSession(name: string) {
         height: box.height / terminal.rows,
       };
     };
-    let start: { x: number; y: number; lastY: number; moved: boolean; pending: number } | undefined;
-    surface.addEventListener("pointerdown", (event) => {
-      start = { x: event.clientX, y: event.clientY, lastY: event.clientY, moved: false, pending: 0 };
-    });
-    surface.addEventListener("pointermove", (event) => {
-      if (!start) return;
-      if (Math.abs(event.clientY - start.y) > 8 || Math.abs(event.clientX - start.x) > 8) start.moved = true;
-      const { col, row, height } = cell(event.clientX, event.clientY);
-      start.pending += start.lastY - event.clientY;
-      start.lastY = event.clientY;
-      const steps = Math.trunc(start.pending / height);
-      if (steps) {
-        start.pending -= steps * height;
+    const tapAt = (x: number, y: number) => {
+      const { col, row } = cell(x, y);
+      const ripple = h("span", { class: "tap-ripple" });
+      ripple.style.left = `${x}px`;
+      ripple.style.top = `${y}px`;
+      document.body.append(ripple);
+      setTimeout(() => ripple.remove(), 400);
+      void sendMouse("click", col, row);
+    };
+    // Scroll steps are batched so a fast swipe is a few requests, not dozens.
+    let queued = 0;
+    let queuedAt = { col: 1, row: 1 };
+    let flushTimer: number | undefined;
+    const queueScroll = (steps: number, col: number, row: number) => {
+      queued += steps;
+      queuedAt = { col, row };
+      flushTimer ??= window.setTimeout(() => {
+        flushTimer = undefined;
+        const count = queued;
+        queued = 0;
         // Finger moving up pulls the content up, i.e. scrolls down.
-        void sendMouse(steps > 0 ? "wheel-down" : "wheel-up", col, row, Math.abs(steps));
+        if (count) void sendMouse(count > 0 ? "wheel-down" : "wheel-up", queuedAt.col, queuedAt.row, Math.abs(count));
+      }, 70);
+    };
+
+    // One gesture: decided as a tap, a vertical swipe (scrolls the agent's list) or a sideways
+    // swipe (left to the browser, which pans a terminal wider than the phone).
+    let gesture: { x: number; y: number; lastY: number; axis?: "x" | "y"; pending: number } | undefined;
+    const begin = (x: number, y: number) => (gesture = { x, y, lastY: y, pending: 0 });
+    const move = (x: number, y: number, stopBrowserScroll: () => void) => {
+      if (!gesture) return;
+      if (!gesture.axis && (Math.abs(x - gesture.x) > 8 || Math.abs(y - gesture.y) > 8)) {
+        gesture.axis = Math.abs(y - gesture.y) >= Math.abs(x - gesture.x) ? "y" : "x";
       }
-    });
-    surface.addEventListener("pointerup", (event) => {
-      if (start && !start.moved) {
-        const { col, row } = cell(event.clientX, event.clientY);
-        const ripple = h("span", { class: "tap-ripple" });
-        ripple.style.left = `${event.clientX}px`;
-        ripple.style.top = `${event.clientY}px`;
-        document.body.append(ripple);
-        setTimeout(() => ripple.remove(), 400);
-        void sendMouse("click", col, row);
+      if (gesture.axis !== "y") return;
+      stopBrowserScroll();
+      const { col, row, height } = cell(x, y);
+      gesture.pending += gesture.lastY - y;
+      gesture.lastY = y;
+      const steps = Math.trunc(gesture.pending / height);
+      if (steps) {
+        gesture.pending -= steps * height;
+        queueScroll(steps, col, row);
       }
-      start = undefined;
-    });
-    surface.addEventListener("pointercancel", () => (start = undefined));
+    };
+    const finish = (x: number, y: number) => {
+      if (gesture && !gesture.axis) tapAt(x, y);
+      gesture = undefined;
+    };
+
+    // Phones: touch events, so a vertical swipe can be kept from scrolling the page instead.
+    surface.addEventListener("touchstart", (event) => {
+      gesture = undefined;
+      if (event.touches.length === 1) begin(event.touches[0].clientX, event.touches[0].clientY);
+    }, { passive: true });
+    surface.addEventListener("touchmove", (event) => {
+      const touch = event.touches[0];
+      if (touch) move(touch.clientX, touch.clientY, () => event.preventDefault());
+    }, { passive: false });
+    surface.addEventListener("touchend", (event) => {
+      const touch = event.changedTouches[0];
+      if (touch && gesture) {
+        finish(touch.clientX, touch.clientY);
+        event.preventDefault(); // no follow-up emulated mouse click
+      }
+    }, { passive: false });
+    surface.addEventListener("touchcancel", () => (gesture = undefined));
+
+    // A mouse (desktop browser) gets the same behaviour.
+    surface.addEventListener("pointerdown", (event) => event.pointerType === "mouse" && begin(event.clientX, event.clientY));
+    surface.addEventListener("pointermove", (event) => event.pointerType === "mouse" && move(event.clientX, event.clientY, () => {}));
+    surface.addEventListener("pointerup", (event) => event.pointerType === "mouse" && finish(event.clientX, event.clientY));
   };
 
   const zoom = (delta: number) => {
