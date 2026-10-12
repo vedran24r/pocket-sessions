@@ -33,6 +33,7 @@ fi
   curl -s -m 3 -X POST \
     -H "content-type: application/json" \
     -H "x-pocket-token: $token" \
+    -H "x-pocket-config-dir: ${CLAUDE_CONFIG_DIR:-}" \
     --data-binary @- \
     "http://127.0.0.1:${POCKET_PORT:-8787}/api/hook?session=$session" \
     <<<"$payload" >/dev/null 2>&1 &

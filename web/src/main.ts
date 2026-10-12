@@ -173,6 +173,28 @@ function chatItem(item: Item): HTMLElement {
   return bubble;
 }
 
+function takeOverBar(name: string): HTMLElement {
+  const button = h("button", { class: "takeover", textContent: "Continue on phone" });
+  button.onclick = async () => {
+    button.disabled = true;
+    button.textContent = "Starting…";
+    try {
+      const { name: typeable } = await api<{ name: string }>(`/api/sessions/${name}/takeover`, {});
+      location.hash = `#/s/${typeable}`;
+    } catch (err) {
+      toast((err as Error).message);
+      button.disabled = false;
+      button.textContent = "Continue on phone";
+    }
+  };
+  return h(
+    "footer",
+    { class: "composer readonly-note" },
+    h("p", {}, "This session was started outside pocket, so it's view only. Continue it here: the conversation resumes in a new session on your computer that you can type into. The original window stays as it is."),
+    button,
+  );
+}
+
 function renderSession(name: string) {
   const readonly = name.startsWith("ro-");
   const title = readonly ? "…" : name.replace(/^cc-[a-z0-9]+-/, "");
@@ -215,7 +237,7 @@ function renderSession(name: string) {
     chat,
     termWrap,
     readonly
-      ? h("footer", { class: "composer readonly-note" }, "View only — this session started outside pocket. Run ", h("code", {}, "/exit"), " then ", h("code", {}, "claude --continue"), " in its terminal to type from here.")
+      ? takeOverBar(name)
       : h("footer", { class: "composer" }, keys, h("div", { class: "input-row" }, input, send)),
   );
 

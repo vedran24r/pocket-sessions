@@ -104,6 +104,19 @@ export async function secondsSinceLaptopInput(session: string): Promise<number> 
   }
 }
 
+export async function uniqueName(base: string): Promise<string> {
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    const exists = await run(["has-session", "-t", `=${name}`]).then(() => true, () => false);
+    if (!exists) return name;
+  }
+}
+
+export async function newSession(name: string, cwd: string, env: Record<string, string>, command: string[]): Promise<void> {
+  const envArgs = Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
+  await run(["new-session", "-d", "-s", name, "-c", cwd, "-x", "100", "-y", "40", ...envArgs, ...command]);
+}
+
 export function killSession(session: string): Promise<string> {
   return run(["kill-session", "-t", `=${session}`]);
 }

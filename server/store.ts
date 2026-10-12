@@ -17,6 +17,10 @@ export interface SessionInfo {
   seenAt?: number;
   cwd?: string;
   note?: string;
+  /** Read-only sessions: what's needed to resume the conversation inside tmux. */
+  sessionId?: string;
+  configDir?: string;
+  movedTo?: string;
 }
 
 interface State {

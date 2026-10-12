@@ -97,3 +97,5 @@ textarea:focus { border-color: var(--accent); }
   background: var(--panel); border: 1px solid var(--line); padding: 10px 14px; border-radius: 10px; max-width: 90vw; z-index: 10;
 }
 .readonly-note { color: var(--muted); font-size: 13px; padding-top: 10px; }
+.readonly-note p { margin: 0 0 10px; }
+.takeover { width: 100%; padding: 12px; background: var(--accent); border: none; color: #fff; font-weight: 600; }

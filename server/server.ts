@@ -58,12 +58,14 @@ async function pushUnlessAtLaptop(session: string, notice: { title: string; body
   await notify({ ...notice, url: `/#/s/${session}`, tag: session });
 }
 
-async function handleHook(session: string, event: any): Promise<void> {
+async function handleHook(session: string, event: any, configDir: string): Promise<void> {
   const profile = profileOf(session);
   const info = (state.sessions[session] ??= { profile, status: "idle", statusAt: Date.now() });
   if (event.transcript_path) info.transcript = event.transcript_path;
   if (event.cwd) info.cwd = event.cwd;
+  if (event.session_id) info.sessionId = event.session_id;
   info.seenAt = Date.now();
+  if (configDir) info.configDir = configDir;
   save();
   const name = short(session);
   console.log(new Date().toISOString(), session, event.hook_event_name, event.notification_type ?? event.source ?? "");
@@ -107,6 +109,30 @@ async function handleHook(session: string, event: any): Promise<void> {
   }
 }
 
+/**
+ * Makes a session started outside pocket typeable: resumes its conversation in a new tmux session.
+ * --fork-session gives the copy its own transcript, so the original terminal's process and the
+ * phone's never append to the same file.
+ */
+async function takeOver(session: string): Promise<string> {
+  const info = state.sessions[session];
+  if (tmux.isTmux(session)) return session;
+  if (info?.movedTo) return info.movedTo;
+  if (!info?.sessionId || !info.cwd) throw Object.assign(new Error("Not enough known about this session yet — wait for its next message."), { status: 409 });
+  const profile = profileOf(session);
+  const slug = path.basename(info.cwd).toLowerCase().replace(/[^a-z0-9._]+/g, "-").replace(/^-|-$/g, "") || "session";
+  const name = await tmux.uniqueName(`cc-${profile}-${slug}`);
+  const shell = process.env.SHELL || "/bin/zsh";
+  // A login + interactive shell picks up the user's PATH, nvm, AWS profile etc. from their rc files.
+  await tmux.newSession(name, info.cwd, info.configDir ? { CLAUDE_CONFIG_DIR: info.configDir } : {}, [
+    shell, "-lic", `exec claude --resume ${info.sessionId} --fork-session`,
+  ]);
+  info.movedTo = name;
+  state.sessions[name] = { profile, status: "idle", statusAt: Date.now(), cwd: info.cwd, transcript: info.transcript };
+  save();
+  return name;
+}
+
 async function listSessions() {
   const live = await tmux.listSessions();
   const liveNames = new Set(live.map((session) => session.name));
@@ -114,6 +140,7 @@ async function listSessions() {
   for (const [name, info] of Object.entries(state.sessions)) {
     const gone = tmux.isTmux(name) ? !liveNames.has(name) : now - (info.seenAt ?? info.statusAt) > READONLY_STALE_MS;
     if (gone) delete state.sessions[name];
+    else if (info.movedTo && !liveNames.has(info.movedTo)) delete info.movedTo; // the phone copy was closed
   }
   const describe = (name: string, cwd: string | undefined, fallbackAt: number) => {
     const info = state.sessions[name];
@@ -128,7 +155,7 @@ async function listSessions() {
       readonly: !tmux.isTmux(name),
     };
   };
-  const readonly = Object.keys(state.sessions).filter((name) => !tmux.isTmux(name));
+  const readonly = Object.keys(state.sessions).filter((name) => !tmux.isTmux(name) && !state.sessions[name].movedTo);
   return [
     ...live.map((session) => describe(session.name, session.path, session.activity * 1000)),
     ...readonly.map((name) => describe(name, undefined, now)),
@@ -266,7 +293,8 @@ const server = http.createServer(async (req, res) => {
       if (!tmux.SESSION_RE.test(session)) return json(res, 400, { error: "bad session" });
       const event = await readJson(req);
       json(res, 200, { ok: true });
-      await handleHook(session, event);
+      const configDir = req.headers["x-pocket-config-dir"];
+      await handleHook(session, event, typeof configDir === "string" ? configDir : "");
       return;
     }
 
@@ -292,6 +320,7 @@ const server = http.createServer(async (req, res) => {
       const profile = profileOf(session);
 
       if (action === "chat" && req.method === "GET") return chatStream(req, res, session);
+      if (action === "takeover" && req.method === "POST") return json(res, 200, { name: await takeOver(session) });
       if (!tmux.isTmux(session)) return json(res, 409, { error: "This session runs outside pocket, so it's read-only. Restart it with `claude --continue` to type from the phone." });
       if (action === "screen" && req.method === "GET") return screenStream(req, res, session);
       if (action === "send" && req.method === "POST") {
