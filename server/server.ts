@@ -7,6 +7,7 @@ import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
 import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
+import { pruneUploads, saveUpload, uploadPath, UPLOADS } from "./uploads.ts";
 import { BranchView, lastAssistantText, TranscriptTail, transcriptTitles } from "./transcript.ts";
 
 const PORT = Number(process.env.POCKET_PORT ?? 8787);
@@ -177,7 +178,7 @@ async function takeOver(session: string): Promise<string> {
   const agent = info.agent ?? "claude";
   // A fork, not a resume: both `claude --resume` and `codex resume` would append to the original's
   // transcript while its terminal may still be open.
-  const command = agent === "codex" ? `exec codex fork ${info.sessionId}` : `exec claude --resume ${info.sessionId} --fork-session`;
+  const command = agent === "codex" ? `exec codex fork ${info.sessionId}` : `exec claude --resume ${info.sessionId} --fork-session --add-dir ${JSON.stringify(UPLOADS)}`;
   const env: Record<string, string> = {};
   if (info.configDir) env.CLAUDE_CONFIG_DIR = info.configDir;
   if (info.codexHome && info.codexHome !== codex.defaultHome()) env.CODEX_HOME = info.codexHome;
@@ -497,6 +498,13 @@ const server = http.createServer(async (req, res) => {
 
     if (parts[0] !== "api") return serveStatic(req, res, url.pathname);
 
+    if (parts[1] === "uploads" && parts.length === 4 && req.method === "GET") {
+      const file = uploadPath(parts[2], parts[3]);
+      const info = file ? await stat(file).catch(() => undefined) : undefined;
+      if (!file || !info?.isFile()) return json(res, 404, { error: "not found" });
+      res.writeHead(200, { "content-type": `image/${path.extname(file).slice(1).replace("jpg", "jpeg")}`, "cache-control": "private, max-age=604800" });
+      return void createReadStream(file).pipe(res);
+    }
     if (url.pathname === "/api/sessions" && req.method === "GET") return json(res, 200, await listSessions());
     if (url.pathname === "/api/push/key") return json(res, 200, { publicKey });
     if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
@@ -537,6 +545,7 @@ const server = http.createServer(async (req, res) => {
         if (submit) setStatus(session, profile, "working");
         return json(res, 200, { ok: true });
       }
+      if (action === "upload" && req.method === "POST") return json(res, 200, { path: await saveUpload(req, session) });
       if (action === "key" && req.method === "POST") {
         const { key } = await readJson(req);
         if (!(key in tmux.KEYS)) return json(res, 400, { error: "unknown key" });
@@ -555,4 +564,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 tmux.startServerIfNeeded();
+void pruneUploads();
+setInterval(() => void pruneUploads(), 6 * 3600_000);
 server.listen(PORT, "127.0.0.1", () => console.log(`pocket listening on http://127.0.0.1:${PORT}${DEV ? " (dev, no auth)" : ""}`));

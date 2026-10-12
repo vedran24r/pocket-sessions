@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Send images from the phone's gallery (📎). They're shrunk on the phone, saved on the computer, and passed to the agent by file path. They show as pictures in the chat. Claude sessions are started with that folder allowed, so reading an image doesn't ask for permission.
+- Sending makes sure the message is actually submitted: Pocket presses Enter again if the text is still sitting in the agent's input line.
+
 ## 1.0.0 — 2026-10-12
 
 First release.

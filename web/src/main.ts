@@ -153,6 +153,35 @@ function sessionCard(session: Session): HTMLElement {
   return card;
 }
 
+// ---------- images ----------
+
+/**
+ * Shrinks a gallery image before it crosses mobile data: a 5 MB phone screenshot becomes a few
+ * hundred KB, which is still far more detail than the model uses. GIFs keep their animation.
+ */
+async function shrinkImage(file: File): Promise<Blob> {
+  if (file.type === "image/gif") return file;
+  const MAX_SIDE = 2000;
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  // Screenshots (PNG) stay PNG so text stays crisp; photos become JPEG.
+  const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.85));
+  return blob && blob.size < file.size ? blob : file;
+}
+
+async function uploadImage(session: string, file: File): Promise<string> {
+  const body = await shrinkImage(file);
+  const response = await fetch(`/api/sessions/${session}/upload`, { method: "POST", headers: { "content-type": body.type || "image/jpeg" }, body });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? response.statusText);
+  return (await response.json()).path;
+}
+
 // ---------- session ----------
 
 function inlineMarkdown(text: string): DocumentFragment {
@@ -169,7 +198,15 @@ function chatItem(item: Item): HTMLElement {
   if (item.k === "tool") return h("div", { class: "tool" }, item.t);
   if (item.k === "error") return h("div", { class: "tool error" }, item.t);
   const bubble = h("div", { class: `msg ${item.k}` });
-  bubble.append(inlineMarkdown(item.t));
+  // Images sent from the phone travel as file paths; show the picture instead of the path.
+  const upload = /^\S*\/\.pocket-sessions\/uploads\/([a-z0-9._-]+)\/(phone-[\w-]+\.(?:jpg|png|webp|gif))$/;
+  const lines = item.t.split("\n");
+  const pictures = item.k === "user" ? lines.map((line) => line.trim().match(upload)).filter((match) => !!match) : [];
+  const text = pictures.length ? lines.filter((line) => !upload.test(line.trim())).join("\n").trim() : item.t;
+  if (text) bubble.append(inlineMarkdown(text));
+  for (const [, session, file] of pictures) {
+    bubble.append(h("img", { class: "msg-image", src: `/api/uploads/${session}/${file}`, alt: "Sent image", loading: "lazy" }));
+  }
   return bubble;
 }
 
@@ -240,6 +277,40 @@ function renderSession(name: string) {
 
   const input = h("textarea", { rows: 1, placeholder: "Message — tap the mic on your keyboard", enterKeyHint: "send" });
   const send = h("button", { class: "send", textContent: "↑", ariaLabel: "Send" });
+  const attach = h("button", { class: "attach", textContent: "📎", ariaLabel: "Add images" });
+  const picker = h("input", { type: "file", accept: "image/*", multiple: true, hidden: true });
+  const attachments = h("div", { class: "attachments", hidden: true });
+  // Each image is uploaded as soon as it's picked; its path joins the message on Send.
+  const images: { path?: string; ready: Promise<void>; chip: HTMLElement }[] = [];
+  const refreshAttachments = () => (attachments.hidden = images.length === 0);
+  attach.onclick = () => picker.click();
+  picker.onchange = () => {
+    for (const file of Array.from(picker.files ?? [])) {
+      const chip = h("div", { class: "chip uploading" }, h("img", { src: URL.createObjectURL(file), alt: "" }));
+      const remove = h("button", { class: "chip-remove", textContent: "✕", ariaLabel: "Remove image" });
+      chip.append(remove);
+      const image: (typeof images)[number] = { chip, ready: Promise.resolve() };
+      remove.onclick = () => {
+        images.splice(images.indexOf(image), 1);
+        chip.remove();
+        refreshAttachments();
+      };
+      image.ready = uploadImage(name, file).then(
+        (path) => {
+          image.path = path;
+          chip.classList.remove("uploading");
+        },
+        (err) => {
+          chip.classList.replace("uploading", "failed");
+          toast(`Image not sent: ${(err as Error).message}`);
+        },
+      );
+      images.push(image);
+      attachments.append(chip);
+    }
+    picker.value = "";
+    refreshAttachments();
+  };
   const keys = h(
     "div",
     { class: "keys" },
@@ -270,7 +341,7 @@ function renderSession(name: string) {
     termWrap,
     readonly
       ? takeOverBar(name)
-      : h("footer", { class: "composer" }, keys, h("div", { class: "input-row" }, input, send)),
+      : h("footer", { class: "composer" }, keys, attachments, h("div", { class: "input-row" }, attach, picker, input, send)),
   );
 
   // Chat stream
@@ -403,9 +474,16 @@ function renderSession(name: string) {
     grow();
   };
   const submit = async () => {
-    const text = input.value.trim();
-    if (!text) return;
     send.disabled = true;
+    await Promise.all(images.map((image) => image.ready));
+    const paths = images.flatMap((image) => (image.path ? [image.path] : []));
+    // The agent reads images by path; put them on their own lines after the message.
+    const typed = input.value.trim();
+    const text = [typed || (paths.length ? "Look at this image:" : ""), ...paths].filter(Boolean).join("\n");
+    if (!text) {
+      send.disabled = false;
+      return;
+    }
     const bubble = chatItem({ k: "user", t: text });
     bubble.classList.add("pending");
     const entry = { text, el: bubble };
@@ -417,6 +495,8 @@ function renderSession(name: string) {
     chat.scrollTop = chat.scrollHeight;
     try {
       await api(`/api/sessions/${name}/send`, { text });
+      images.splice(0).forEach((image) => image.chip.remove());
+      refreshAttachments();
       input.value = "";
       sessionStorage.removeItem(draftKey);
       grow();

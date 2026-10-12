@@ -73,11 +73,23 @@ export async function sendText(session: string, text: string, submit: boolean): 
   const buffer = `pocket-${process.pid}-${Date.now()}`;
   await run(["load-buffer", "-b", buffer, "-"], text);
   await run(["paste-buffer", "-p", "-d", "-b", buffer, "-t", `=${session}:`]);
-  if (submit) {
-    // Claude Code debounces pastes; an Enter that arrives too soon becomes part of the paste.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+  if (!submit) return;
+  // Claude Code debounces pastes and takes longer over pasted file paths; an Enter that arrives
+  // too early is swallowed. Press it, then check the text left the input box, up to three times.
+  const snippet = text.split("\n")[0].trim().slice(0, 24);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 150 + attempt * 350));
     await run(["send-keys", "-t", `=${session}:`, "Enter"]);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    if (!snippet || !(await stillInInput(session, snippet))) return;
   }
+}
+
+/** Whether the agent's input line (Claude's "❯", Codex's "›") still holds this text. */
+async function stillInInput(session: string, snippet: string): Promise<boolean> {
+  const screen = await run(["capture-pane", "-p", "-t", `=${session}:`]).catch(() => "");
+  const inputLine = screen.split("\n").reverse().find((row) => /^\s*[❯›]\s/.test(row));
+  return !!inputLine && inputLine.includes(snippet);
 }
 
 export const KEYS: Record<string, string[]> = {

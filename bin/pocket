@@ -39,7 +39,10 @@ cmd_run() {
     agent="$(basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
     label="$agent"
   else
-    cmd=("$CLAUDE_BIN" "$@")
+    # Images sent from the phone land here; allowing the folder up front saves a permission prompt per image.
+    UPLOADS="${POCKET_STATE_DIR:-$HOME/.pocket-sessions}/uploads"
+    mkdir -p "$UPLOADS"
+    cmd=("$CLAUDE_BIN" --add-dir "$UPLOADS" "$@")
     agent="claude"
     label="$(profile)"
   fi
