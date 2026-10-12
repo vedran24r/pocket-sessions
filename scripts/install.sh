@@ -61,6 +61,7 @@ elif command -v dnf >/dev/null; then PM=dnf
 elif command -v pacman >/dev/null; then PM=pacman
 fi
 SUDO=""; [[ $(id -u) != 0 ]] && SUDO=sudo
+USER="${USER:-$(id -un)}" # unset under docker exec, cron and some SSH setups
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 TS="$(command -v tailscale || true)"
