@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
+import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
 import { lastAssistantText, TranscriptTail } from "./transcript.ts";
 
@@ -59,7 +60,7 @@ async function pushUnlessAtLaptop(session: string, notice: { title: string; body
   await notify({ ...notice, url: `/#/s/${session}`, tag: session });
 }
 
-async function handleHook(session: string, event: any, configDir: string): Promise<void> {
+async function handleHook(session: string, event: any, configDir: string, pid: number): Promise<void> {
   const profile = profileOf(session);
   const info = (state.sessions[session] ??= { profile, status: "idle", statusAt: Date.now() });
   if (event.transcript_path) info.transcript = event.transcript_path;
@@ -67,6 +68,7 @@ async function handleHook(session: string, event: any, configDir: string): Promi
   if (event.session_id) info.sessionId = event.session_id;
   info.seenAt = Date.now();
   if (configDir) info.configDir = configDir;
+  if (pid > 1) info.pid = pid;
   save();
   const name = short(session);
   console.log(new Date().toISOString(), session, event.hook_event_name, event.notification_type ?? event.source ?? "");
@@ -76,6 +78,7 @@ async function handleHook(session: string, event: any, configDir: string): Promi
       setStatus(session, profile, "idle");
       break;
     case "UserPromptSubmit":
+      delete info.hidden;
       setStatus(session, profile, "working");
       break;
     case "PostToolUse":
@@ -110,6 +113,24 @@ async function handleHook(session: string, event: any, configDir: string): Promi
   }
 }
 
+/** Codex `notify`: fires once per finished turn ("agent-turn-complete"). */
+async function handleCodexTurn(session: string, event: any, home: string): Promise<void> {
+  if (event.type !== "agent-turn-complete" || typeof event["thread-id"] !== "string") return;
+  const known = state.sessions[session];
+  const transcript = known?.transcript ?? (await codex.findRollout(home, event["thread-id"]));
+  if (transcript && !codex.isInteractive(await codex.readMeta(transcript))) return; // `codex exec` run
+  const profile = profileOf(session);
+  const info = (state.sessions[session] ??= { profile, status: "idle", statusAt: Date.now() });
+  Object.assign(info, { agent: "codex", codexHome: home, sessionId: event["thread-id"], seenAt: Date.now() });
+  if (transcript) info.transcript = transcript;
+  if (event.cwd) info.cwd = event.cwd;
+  delete info.hidden;
+  setStatus(session, profile, "done");
+  const reply = preview(profile) ? event["last-assistant-message"] : undefined;
+  info.pushedAt = Date.now();
+  await pushUnlessAtLaptop(session, { title: `✅ ${short(session)} finished`, body: typeof reply === "string" && reply ? reply.slice(0, 180) : "Ready for your next message" });
+}
+
 /**
  * Makes a session started outside pocket typeable: resumes its conversation in a new tmux session.
  * --fork-session gives the copy its own transcript, so the original terminal's process and the
@@ -124,14 +145,42 @@ async function takeOver(session: string): Promise<string> {
   const slug = path.basename(info.cwd).toLowerCase().replace(/[^a-z0-9._]+/g, "-").replace(/^-|-$/g, "") || "session";
   const name = await tmux.uniqueName(`pk-${profile}-${slug}`);
   const shell = process.env.SHELL || "/bin/zsh";
+  const agent = info.agent ?? "claude";
+  // A fork, not a resume: both `claude --resume` and `codex resume` would append to the original's
+  // transcript while its terminal may still be open.
+  const command = agent === "codex" ? `exec codex fork ${info.sessionId}` : `exec claude --resume ${info.sessionId} --fork-session`;
+  const env: Record<string, string> = {};
+  if (info.configDir) env.CLAUDE_CONFIG_DIR = info.configDir;
+  if (info.codexHome && info.codexHome !== codex.defaultHome()) env.CODEX_HOME = info.codexHome;
   // A login + interactive shell picks up the user's PATH, nvm, AWS profile etc. from their rc files.
-  await tmux.newSession(name, info.cwd, info.configDir ? { CLAUDE_CONFIG_DIR: info.configDir } : {}, [
-    shell, "-lic", `exec claude --resume ${info.sessionId} --fork-session`,
-  ]);
+  await tmux.newSession(name, info.cwd, env, [shell, "-lic", command], agent);
   info.movedTo = name;
-  state.sessions[name] = { profile, status: "idle", statusAt: Date.now(), cwd: info.cwd, transcript: info.transcript };
+  // Claude's fork shows the history right away from the old transcript; Codex's fork gets found by cwd.
+  state.sessions[name] = { profile, agent, status: "idle", statusAt: Date.now(), cwd: info.cwd, transcript: agent === "claude" ? info.transcript : undefined };
   save();
   return name;
+}
+
+/** Closes a pocket session (its agent exits; Claude's transcript stays resumable) or hides a read-only one. */
+async function endSession(session: string): Promise<void> {
+  if (tmux.isTmux(session)) {
+    await tmux.killSession(session).catch(() => {}); // already gone is fine
+    delete state.sessions[session];
+    screenWatch.delete(session);
+  } else if (state.sessions[session]) {
+    state.sessions[session].hidden = true;
+  }
+  save();
+}
+
+function processAlive(pid: number | undefined): boolean {
+  if (!pid) return true; // unknown: fall back to the staleness timeout
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 async function listSessions() {
@@ -139,7 +188,7 @@ async function listSessions() {
   const liveNames = new Set(live.map((session) => session.name));
   const now = Date.now();
   for (const [name, info] of Object.entries(state.sessions)) {
-    const gone = tmux.isTmux(name) ? !liveNames.has(name) : now - (info.seenAt ?? info.statusAt) > READONLY_STALE_MS;
+    const gone = tmux.isTmux(name) ? !liveNames.has(name) : !processAlive(info.pid) || now - (info.seenAt ?? info.statusAt) > READONLY_STALE_MS;
     if (gone) delete state.sessions[name];
     else if (info.movedTo && !liveNames.has(info.movedTo)) delete info.movedTo; // the phone copy was closed
   }
@@ -154,11 +203,12 @@ async function listSessions() {
       note: info?.note,
       cwd: cwd ?? info?.cwd ?? "",
       readonly: !tmux.isTmux(name),
-      agent: agentOf.get(name) ?? "claude",
+      agent: agentOf.get(name) ?? info?.agent ?? "claude",
+      hasChat: !!info?.transcript,
     };
   };
   for (const session of live) agentOf.set(session.name, session.agent);
-  const readonly = Object.keys(state.sessions).filter((name) => !tmux.isTmux(name) && !state.sessions[name].movedTo);
+  const readonly = Object.keys(state.sessions).filter((name) => !tmux.isTmux(name) && !state.sessions[name].movedTo && !state.sessions[name].hidden);
   return [
     ...live.map((session) => describe(session.name, session.path, session.activity * 1000)),
     ...readonly.map((name) => describe(name, undefined, now)),
@@ -198,7 +248,7 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
 
   const sendStatus = (send: (event: string, data: unknown) => void) => {
     const info = state.sessions[session];
-    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: short(session), agent: agentOf.get(session) ?? "claude" };
+    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: short(session), agent: agentOf.get(session) ?? info?.agent ?? "claude", hasChat: !!info?.transcript };
     const key = JSON.stringify(status);
     if (key !== lastStatus) {
       lastStatus = key;
@@ -304,6 +354,14 @@ async function watchQuietAgents(): Promise<void> {
   for (const name of screenWatch.keys()) if (!live.some((session) => session.name === name)) screenWatch.delete(name);
   for (const session of live) {
     agentOf.set(session.name, session.agent);
+    if (session.agent === "codex" && !state.sessions[session.name]?.transcript) {
+      const found = await codex.discoverRollout(codex.defaultHome(), session.path, session.created - 5000);
+      if (found) {
+        const info = (state.sessions[session.name] ??= { profile: profileOf(session.name), status: "idle", statusAt: now });
+        Object.assign(info, { transcript: found, agent: "codex" });
+        save();
+      }
+    }
     const screen = await tmux.captureScreen(session.name).catch(() => undefined);
     if (!screen) continue;
     const watch = screenWatch.get(session.name);
@@ -320,7 +378,8 @@ async function watchQuietAgents(): Promise<void> {
       const ranFor = watch.changedAt - watch.activeSince;
       watch.activeSince = 0;
       setStatus(session.name, profileOf(session.name), "done");
-      if (ranFor >= MIN_ACTIVE_MS) {
+      const pushedAt = state.sessions[session.name]?.pushedAt ?? 0;
+      if (ranFor >= MIN_ACTIVE_MS && now - pushedAt > 60_000) {
         await pushUnlessAtLaptop(session.name, { title: `✅ ${short(session.name)} went quiet`, body: `${session.agent} finished or is waiting for you` });
       }
     }
@@ -345,8 +404,13 @@ const server = http.createServer(async (req, res) => {
       if (!tmux.SESSION_RE.test(session)) return json(res, 400, { error: "bad session" });
       const event = await readJson(req);
       json(res, 200, { ok: true });
-      const configDir = req.headers["x-pocket-config-dir"];
-      await handleHook(session, event, typeof configDir === "string" ? configDir : "");
+      if (req.headers["x-pocket-agent"] === "codex") {
+        const home = req.headers["x-pocket-codex-home"];
+        await handleCodexTurn(session, event, typeof home === "string" && home ? home : codex.defaultHome());
+      } else {
+        const configDir = req.headers["x-pocket-config-dir"];
+        await handleHook(session, event, typeof configDir === "string" ? configDir : "", Number(req.headers["x-pocket-pid"]) || 0);
+      }
       return;
     }
 
@@ -372,6 +436,10 @@ const server = http.createServer(async (req, res) => {
       const profile = profileOf(session);
 
       if (action === "chat" && req.method === "GET") return chatStream(req, res, session);
+      if (action === "end" && req.method === "POST") {
+        await endSession(session);
+        return json(res, 200, { ok: true });
+      }
       if (action === "takeover" && req.method === "POST") return json(res, 200, { name: await takeOver(session) });
       if (!tmux.isTmux(session)) return json(res, 409, { error: "This session runs outside pocket, so it's read-only. Restart it with `claude --continue` to type from the phone." });
       if (action === "screen" && req.method === "GET") {

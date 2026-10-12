@@ -203,6 +203,19 @@ function renderSession(name: string) {
   const chatTab = h("button", { class: "tab active", textContent: "Chat" });
   const termTab = h("button", { class: "tab", textContent: "Terminal" });
   const back = h("a", { class: "back", href: "#/", textContent: "‹" });
+  const end = h("button", { class: "end", textContent: readonly ? "Hide" : "End" });
+  end.onclick = async () => {
+    const question = readonly
+      ? "Hide this session from the list? It comes back when you next use it."
+      : "End this session? The agent on your computer is closed. Claude conversations can be resumed later with claude --resume.";
+    if (!confirm(question)) return;
+    try {
+      await api(`/api/sessions/${name}/end`, {});
+      location.hash = "#/";
+    } catch (err) {
+      toast((err as Error).message);
+    }
+  };
 
   const chat = h("div", { class: "chat" });
   const tabs = readonly ? undefined : h("nav", { class: "tabs" }, chatTab, termTab);
@@ -236,7 +249,7 @@ function renderSession(name: string) {
   );
 
   app.replaceChildren(
-    h("header", { class: "bar" }, back, titleEl, statusEl),
+    h("header", { class: "bar" }, back, titleEl, statusEl, end),
     ...(tabs ? [tabs] : []),
     chat,
     termWrap,
@@ -256,16 +269,17 @@ function renderSession(name: string) {
     if (stick) chat.scrollTop = chat.scrollHeight;
   });
   chatSource.addEventListener("status", (event) => {
-    const { status, note, title: liveTitle, agent } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string };
+    const { status, note, title: liveTitle, agent, hasChat } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string; hasChat?: boolean };
     if (liveTitle) titleEl.textContent = liveTitle;
     statusEl.textContent = STATUS_LABEL[status];
     statusEl.className = `status-pill status-${status}`;
     statusEl.title = note ?? "";
-    // Agents other than Claude have no transcript, so the terminal is the whole view.
-    if (agent && agent !== "claude" && !terminalOnly) {
-      terminalOnly = true;
-      tabs?.remove();
-      showTab(true);
+    // Agents with no readable transcript (yet) get the terminal as the whole view.
+    const chatless = !readonly && !!agent && agent !== "claude" && !hasChat;
+    if (chatless !== terminalOnly) {
+      terminalOnly = chatless;
+      if (tabs) tabs.hidden = chatless;
+      if (chatless) showTab(true);
     }
   });
   if (!chat.childElementCount) chat.append(h("p", { class: "muted pad" }, "Waiting for the first message in this session…"));

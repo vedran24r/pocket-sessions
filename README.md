@@ -21,12 +21,12 @@ phone (PWA) ──HTTPS over Tailscale──▶ tailscale serve ──▶ pocket
                          tmux -L pocket ──────────────────────┘ Terminal view + typing
 ```
 
-- `claude` becomes a small shell function that starts Claude inside a dedicated tmux server (`tmux -L pocket`). Your terminal attaches to it as usual. Close the window and the session keeps running, so you can reach it from the phone or reattach with `pocket attach <name>`.
+- `claude` becomes a small shell function that starts Claude inside a dedicated tmux server (`tmux -L pocket`). Your terminal attaches to it as usual. Closing the window ends the session, just like before. To leave a session running for the phone without a window, detach instead (`Ctrl-b d`), or set `POCKET_KEEP_ON_CLOSE=1`.
 - Claude Code **hooks** tell the server when a session starts, works, finishes or waits for permission. The server turns that into status dots and Web Push notifications.
 - **Chat view:** the conversation as readable bubbles, built from Claude's transcript file.
 - **Terminal view:** the actual screen, for menus and prompts. Quick keys: `Esc 1 2 3 ⏎ ↑ ↓ ⇧Tab ^C`.
 - Typed or dictated text is pasted with bracketed paste, so a multi-line message stays one message.
-- Sessions that were already running before you installed Pocket, or started outside it, still appear: **view only**, with chat and notifications. Restart one with `claude --continue` to make it typeable.
+- Sessions started outside Pocket (or before you installed it) still appear: **view only**, with chat and notifications. Tap **Continue on phone** and the conversation resumes in a new, typeable session on your computer (a fork, so the original window is left alone).
 
 ## Other agents
 
@@ -38,23 +38,27 @@ pocket run -- gemini
 pocket run -- aider --model sonnet
 ```
 
-Add a wrapper like `codex() { pocket run -- codex "$@"; }` to make it automatic.
+Add a wrapper like `codex() { pocket run -- codex "$@"; }` to make it automatic (the installer prints these).
 
-| | Claude Code | Any other agent |
-|---|---|---|
-| Terminal view, typing, quick keys | ✅ | ✅ |
-| Fits the terminal to the phone while the laptop is detached | ✅ | ✅ |
-| Push when finished | ✅ from hooks | ✅ when the screen goes quiet after working |
-| Push when it asks for permission | ✅ | covered by the "went quiet" push |
-| Chat view (readable conversation) | ✅ | — terminal only, for now |
-| Continue a session started outside Pocket | ✅ | — |
+| | Claude Code | Codex | Any other agent |
+|---|---|---|---|
+| Terminal view, typing, quick keys | ✅ | ✅ | ✅ |
+| Terminal fits the phone while the laptop is detached | ✅ | ✅ | ✅ |
+| Chat view (readable conversation) | ✅ | ✅ | — |
+| Push when a turn finishes | ✅ hooks | ✅ `notify` | ✅ screen goes quiet after working |
+| Push when it needs permission | ✅ | ✅ screen goes quiet | ✅ screen goes quiet |
+| View sessions started outside Pocket | ✅ | ✅ | — |
+| Continue on phone | ✅ `claude --resume --fork-session` | ✅ `codex fork` | — |
 
-Richer adapters (a chat view and exact notifications for Codex and friends) are the next step. PRs welcome.
+**Codex:** the installer adds `notify = [".../hooks/codex-notify.sh"]` to `~/.codex/config.toml` (or `$CODEX_HOME`). If you already have a `notify` program it's left alone, and the installer prints how to call ours from it. The Chat view reads Codex's session logs in `~/.codex/sessions`, and `codex exec` runs are ignored.
+
+Adapters for more agents are welcome: one parser in `server/transcript.ts` and one notifier in `hooks/`.
 
 ## Requirements
 
-- macOS (the installer uses launchd; the server itself is plain Node and tmux, so Linux support is a small PR away)
-- Node 23.6+, tmux (`brew install tmux`), and Tailscale on the Mac and the phone
+- macOS (launchd) or Linux (systemd user service)
+- Node 23.6+, tmux (`brew install tmux` / `apt install tmux`), and Tailscale on the computer and the phone
+- Linux only: let your user manage Tailscale once with `sudo tailscale set --operator=$USER`, and run `sudo loginctl enable-linger $USER` if sessions should stay reachable while you're logged out
 - In the Tailscale admin console: **Serve** and **HTTPS certificates** enabled. The first `tailscale serve` prints the link if they aren't.
 
 ## Install
@@ -82,7 +86,9 @@ On the phone: open the `https://<your-mac>.<tailnet>.ts.net` address the install
 | Start a session | `claude` as usual |
 | Bypass Pocket once | `command claude` |
 | See what's running | `pocket ls` |
-| Get a closed window's session back | `pocket attach <name>` |
+| Leave a session running for the phone | detach with `Ctrl-b d` |
+| Get a detached session back | `pocket attach <name>` |
+| Close a session from the phone | open it → **End** (a view-only one: **Hide**) |
 
 One-shot commands (`claude -p`, `claude --version`, `claude mcp …`) are passed straight through and never notify.
 
@@ -90,7 +96,7 @@ One-shot commands (`claude -p`, `claude --version`, `claude mcp …`) are passed
 
 You get a push when a session **finishes a turn** or **needs input** (a permission prompt, a question). Tapping it opens that session. Nothing is pushed for a session you typed into on the laptop in the last 90 seconds, because you're clearly there.
 
-Pushes include the start of Claude's reply. To limit that to some profiles, set `POCKET_PREVIEW_PROFILES=game,personal` in the launchd plist. Payloads are end-to-end encrypted by the Web Push protocol.
+Pushes include the start of Claude's reply. To limit that to some profiles, set `POCKET_PREVIEW_PROFILES=game,personal` in the service file (launchd plist or systemd unit). Payloads are end-to-end encrypted by the Web Push protocol.
 
 ## Security
 
@@ -110,12 +116,16 @@ npm run dev                                            # Vite on :5173, proxies 
 npm run typecheck
 ```
 
-After changing `web/`, run `npm run build`. After changing `server/`, run `launchctl kickstart -k gui/$(id -u)/ai.pocket-sessions`. Logs are in `~/.pocket-sessions/server.log`.
+After changing `web/`, run `npm run build`. After changing `server/`, restart the service: `launchctl kickstart -k gui/$(id -u)/ai.pocket-sessions` on macOS, `systemctl --user restart pocket-sessions` on Linux. Logs are in `~/.pocket-sessions/server.log`.
 
 ## Uninstall
 
 ```bash
+# macOS
 launchctl bootout gui/$(id -u)/ai.pocket-sessions && rm ~/Library/LaunchAgents/ai.pocket-sessions.plist
+# Linux
+systemctl --user disable --now pocket-sessions && rm ~/.config/systemd/user/pocket-sessions.service
+
 tailscale serve --https=443 off
 rm ~/.local/bin/pocket
 ```

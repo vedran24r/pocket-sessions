@@ -1,0 +1,18 @@
+[Unit]
+Description=Pocket Sessions server
+After=network-online.target
+
+[Service]
+ExecStart={{NODE}} {{ROOT}}/server/server.ts
+WorkingDirectory={{ROOT}}
+Environment=PATH={{PATH}}
+# tmux needs a UTF-8 locale to pass agents' output through unmangled.
+Environment=LANG=C.UTF-8
+Environment=POCKET_USERS={{USERS}}
+Restart=always
+RestartSec=2
+StandardOutput=append:{{HOME}}/.pocket-sessions/server.log
+StandardError=append:{{HOME}}/.pocket-sessions/server.log
+
+[Install]
+WantedBy=default.target

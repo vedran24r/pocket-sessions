@@ -3,9 +3,10 @@
 #
 #   pocket run [claude args...]    Claude Code session for this directory (what the `claude` wrapper calls)
 #   pocket run -- <cmd> [args...]  any other terminal agent: codex, gemini, aider, opencode, ...
-#   pocket attach <name>           reattach to a session, e.g. after closing its terminal window
+#   pocket attach <name>           reattach to a session you detached from (prefix + d)
 #   pocket ls                      list sessions
 #
+# Closing the terminal window ends its session; set POCKET_KEEP_ON_CLOSE=1 to keep it running instead.
 # Claude's label comes from POCKET_PROFILE, else CLAUDE_CONFIG_DIR (~/.claude-game → "game"), else "claude".
 set -euo pipefail
 
@@ -22,8 +23,12 @@ profile() {
   fi
 }
 
+# Closing the terminal window hangs up this script (SIGHUP) and ends the session with it.
+# A deliberate detach (prefix + d) exits normally and leaves the session running for the phone.
 attach() {
-  if [[ -n "${TMUX:-}" ]]; then "${T[@]}" switch-client -t "=$1"; else exec "${T[@]}" attach-session -t "=$1"; fi
+  if [[ -n "${TMUX:-}" ]]; then "${T[@]}" switch-client -t "=$1"; return; fi
+  [[ "${POCKET_KEEP_ON_CLOSE:-0}" == 1 ]] || trap '"${T[@]}" kill-session -t "=$1" 2>/dev/null; exit 0' HUP
+  "${T[@]}" attach-session -t "=$1"
 }
 
 cmd_run() {
@@ -78,5 +83,5 @@ case "${1:-}" in
   run) shift; cmd_run "$@" ;;
   attach) attach "${2:?usage: pocket attach <session>}" ;;
   ls) "${T[@]}" list-sessions -F '#{session_name}  #{?session_attached,(attached),}' 2>/dev/null | grep '^pk-' || echo "no sessions" ;;
-  *) sed -n '3,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '3,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

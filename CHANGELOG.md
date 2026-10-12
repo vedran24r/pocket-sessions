@@ -1,0 +1,16 @@
+# Changelog
+
+## 1.0.0 — 2026-10-12
+
+First release.
+
+- Every `claude` session runs in a dedicated tmux server, so your phone can watch it and type into it. You keep typing `claude` as usual.
+- Phone app (installable PWA): a session list with live status, a Chat view, a Terminal view, a voice-friendly composer and quick keys.
+- Push notifications when a session finishes a turn or needs you. None are sent while you're typing on the laptop.
+- Sessions started outside Pocket appear view-only. **Continue on phone** forks them into a typeable session.
+- **End** closes a session from the phone; **Hide** removes a view-only one from the list.
+- Closing a terminal window ends its session. Detach with `Ctrl-b d` to leave it running for the phone, or set `POCKET_KEEP_ON_CLOSE=1`.
+- The terminal resizes to fit the phone while no laptop terminal is attached.
+- Any terminal agent works with `pocket run -- <cmd>`, with "went quiet" notifications.
+- Codex adapter: Chat view, a push on every finished turn, view-only sessions, and Continue on phone via `codex fork`.
+- One-command install on macOS (launchd) and Linux (systemd user service; the Linux path is lint-checked but not yet run on a real Linux machine — reports welcome). It's reachable only over your Tailscale network, and only your Tailscale login can open it.

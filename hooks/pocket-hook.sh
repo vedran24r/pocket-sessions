@@ -29,11 +29,20 @@ if [[ -z "$session" ]]; then
   session="ro-$profile-$id"
 fi
 
+# The agent's process id lets the server drop a session whose window was closed without a clean exit.
+pid=$PPID
+for _ in 1 2 3 4; do
+  [[ "$(ps -o comm= -p "$pid" 2>/dev/null)" == *claude* ]] && break
+  pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+  [[ -n "$pid" && "$pid" != 1 ]] || { pid=""; break; }
+done
+
 (
   curl -s -m 3 -X POST \
     -H "content-type: application/json" \
     -H "x-pocket-token: $token" \
     -H "x-pocket-config-dir: ${CLAUDE_CONFIG_DIR:-}" \
+    -H "x-pocket-pid: ${pid:-}" \
     --data-binary @- \
     "http://127.0.0.1:${POCKET_PORT:-8787}/api/hook?session=$session" \
     <<<"$payload" >/dev/null 2>&1 &

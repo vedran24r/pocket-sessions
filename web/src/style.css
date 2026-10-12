@@ -99,3 +99,5 @@ textarea:focus { border-color: var(--accent); }
 .readonly-note { color: var(--muted); font-size: 13px; padding-top: 10px; }
 .readonly-note p { margin: 0 0 10px; }
 .takeover { width: 100%; padding: 12px; background: var(--accent); border: none; color: #fff; font-weight: 600; }
+.end { padding: 4px 10px; font-size: 13px; color: var(--muted); background: transparent; }
+.tabs[hidden] { display: none; }

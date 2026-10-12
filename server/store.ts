@@ -20,7 +20,16 @@ export interface SessionInfo {
   /** Read-only sessions: what's needed to resume the conversation inside tmux. */
   sessionId?: string;
   configDir?: string;
+  /** "claude" when absent. */
+  agent?: string;
+  codexHome?: string;
+  /** Last push sent from an agent's own signal, so the quiet-screen watcher doesn't repeat it. */
+  pushedAt?: number;
   movedTo?: string;
+  /** Read-only session the person hid; it comes back when they next send it a prompt. */
+  hidden?: boolean;
+  /** The agent process, for read-only sessions: gone means its window was closed. */
+  pid?: number;
 }
 
 interface State {
