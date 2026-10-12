@@ -276,12 +276,38 @@ function renderSession(name: string) {
   // Chat stream
   const nearBottom = () => chat.scrollHeight - chat.scrollTop - chat.clientHeight < 120;
   const chatSource = new EventSource(`/api/sessions/${name}/chat`);
+
+  // A sent message shows at once as "sending…" and turns into the real bubble when the agent
+  // records it; the working line shows the agent's own status ("✻ Thinking… (12s)") while it runs.
+  const pending: { text: string; el: HTMLElement }[] = [];
+  const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+  const workingText = h("span", { class: "working-text" }, "Working…");
+  const working = h("div", { class: "working", hidden: true }, h("span", { class: "working-dots" }), workingText);
+  let currentStatus: Status = "idle";
+  let activity = "";
+  const placeholder = h("p", { class: "muted pad" }, "Waiting for the first message in this session…");
+  const settleBottom = () => {
+    chat.append(...pending.map((entry) => entry.el), working);
+    const busy = currentStatus === "working" || pending.length > 0;
+    working.hidden = !busy;
+    workingText.textContent = activity || (currentStatus === "working" ? "Working…" : "Sending…");
+  };
   chatSource.addEventListener("chat", (event) => {
     const { reset, items } = JSON.parse((event as MessageEvent).data) as { reset?: boolean; items: Item[] };
     const stick = reset || nearBottom();
     if (reset) chat.replaceChildren();
     chat.append(...items.map(chatItem));
+    for (const item of items) {
+      if (item.k !== "user") continue;
+      const index = pending.findIndex((entry) => normalize(entry.text) === normalize(item.t));
+      if (index >= 0) pending.splice(index, 1)[0].el.remove();
+    }
+    settleBottom();
     if (stick) chat.scrollTop = chat.scrollHeight;
+  });
+  chatSource.addEventListener("activity", (event) => {
+    activity = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
+    settleBottom();
   });
   chatSource.addEventListener("status", (event) => {
     const { status, note, title: liveTitle, agent, hasChat, sharedWith } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string; hasChat?: boolean; sharedWith?: string[] };
@@ -291,6 +317,9 @@ function renderSession(name: string) {
     shared.textContent = sharedWith?.length
       ? `This conversation is also open in ${sharedWith.join(", ")}. Both windows write to the same history, so you're seeing only this window's thread. Start one of them with a fresh claude to keep them apart.`
       : "";
+    currentStatus = status;
+    if (status !== "working") activity = "";
+    settleBottom();
     statusEl.textContent = STATUS_LABEL[status];
     statusEl.className = `status-pill status-${status}`;
     statusEl.title = note ?? "";
@@ -302,7 +331,7 @@ function renderSession(name: string) {
       if (chatless) showTab(true);
     }
   });
-  if (!chat.childElementCount) chat.append(h("p", { class: "muted pad" }, "Waiting for the first message in this session…"));
+  if (!chat.childElementCount) chat.append(placeholder);
 
   // Terminal snapshot stream — only while that tab is open, it changes constantly.
   let term: Terminal | undefined;
@@ -377,13 +406,35 @@ function renderSession(name: string) {
     const text = input.value.trim();
     if (!text) return;
     send.disabled = true;
+    const bubble = chatItem({ k: "user", t: text });
+    bubble.classList.add("pending");
+    const entry = { text, el: bubble };
+    const isCommand = text.startsWith("/"); // slash commands aren't recorded as messages
+    placeholder.remove();
+    if (!isCommand) pending.push(entry);
+    settleBottom();
+    if (isCommand) chat.insertBefore(bubble, working);
+    chat.scrollTop = chat.scrollHeight;
     try {
       await api(`/api/sessions/${name}/send`, { text });
       input.value = "";
       sessionStorage.removeItem(draftKey);
       grow();
-      chat.scrollTop = chat.scrollHeight;
+      // Not recorded within a minute (e.g. the agent was showing a menu): stop pretending it's on its way.
+      setTimeout(() => {
+        const index = pending.indexOf(entry);
+        if (index >= 0) {
+          pending.splice(index, 1);
+          bubble.classList.replace("pending", "unconfirmed");
+          bubble.title = "Sent, but the agent hasn't recorded it yet — check the Terminal tab";
+          settleBottom();
+        }
+      }, 60_000);
     } catch (err) {
+      const index = pending.indexOf(entry);
+      if (index >= 0) pending.splice(index, 1);
+      bubble.classList.replace("pending", "failed");
+      settleBottom();
       toast((err as Error).message);
     } finally {
       send.disabled = false;

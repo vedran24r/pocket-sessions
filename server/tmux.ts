@@ -143,6 +143,26 @@ export async function renamePaneTitle(session: string, name: string): Promise<vo
   await run(["select-pane", "-t", `=${session}:`, "-T", `${icons}${name}`]);
 }
 
+/**
+ * The agent's own "busy" line from the screen: Claude's "✻ Determining… (8s · ↓ 89 tokens)" (an
+ * icon, a word ending in "…", then the elapsed time) or Codex's "• Working (8s • esc to interrupt)".
+ * Claude's footer also says "esc to interrupt" but carries no timer, so the timer is what's matched.
+ */
+export async function activityLine(session: string): Promise<string> {
+  const screen = await run(["capture-pane", "-p", "-t", `=${session}:`]).catch(() => "");
+  const rows = screen.split("\n").reverse();
+  const line =
+    rows.find((row) => /^\s*\S\s+\S.*…\s*\(\d+\s*[smh]/u.test(row)) ??
+    rows.find((row) => /\(\d+\s*[smh][^)]*esc to interrupt/i.test(row));
+  if (!line) return "";
+  return line
+    .replace(/\s*[·•]?\s*esc to interrupt/i, "")
+    .replace(/\(\s*\)/, "")
+    .replace(/\s+\)/, ")")
+    .replace(/^[\s│|]+|[\s│|]+$/g, "")
+    .slice(0, 120);
+}
+
 export function killSession(session: string): Promise<string> {
   return run(["kill-session", "-t", `=${session}`]);
 }

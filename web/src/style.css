@@ -103,3 +103,13 @@ textarea:focus { border-color: var(--accent); }
 .tabs[hidden] { display: none; }
 .shared-note { margin: 8px 10px 0; padding: 8px 10px; border-radius: 10px; font-size: 13px; color: var(--working); background: color-mix(in srgb, var(--working) 12%, transparent); }
 .shared-note[hidden] { display: none; }
+.msg.user.pending { opacity: 0.55; }
+.msg.user.pending::after { content: " · sending…"; font-size: 12px; color: var(--muted); }
+.msg.user.unconfirmed::after { content: " · not in the chat yet"; font-size: 12px; color: var(--working); }
+.msg.user.failed { border: 1px solid var(--waiting); }
+.msg.user.failed::after { content: " · not sent"; font-size: 12px; color: var(--waiting); }
+.working { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; padding: 6px 2px; }
+.working[hidden] { display: none; }
+.working-text { font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.working-dots { width: 22px; height: 6px; flex: none; background: radial-gradient(circle, var(--working) 2.5px, transparent 3px) 0 50% / 8px 6px repeat-x; animation: dots 1s steps(3) infinite; clip-path: inset(0 100% 0 0); }
+@keyframes dots { to { clip-path: inset(0 -10% 0 0); } }

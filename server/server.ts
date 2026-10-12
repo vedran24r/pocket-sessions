@@ -286,6 +286,8 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
   let tail: TranscriptTail | undefined;
   let branch: { file: string; source: TranscriptTail; view: BranchView; shown: string } | undefined;
   let lastStatus = "";
+  let lastActivity = "";
+  let ticks = 0;
   const listeners = statusListeners.get(session) ?? new Set();
   statusListeners.set(session, listeners);
 
@@ -309,8 +311,17 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
       pushStatus = () => sendStatus(send);
       await refreshTitle(session);
       sendStatus(send);
+      if (tmux.isTmux(session) && ticks++ % 2 === 0) {
+        const working = state.sessions[session]?.status === "working";
+        const activity = working ? await tmux.activityLine(session) : "";
+        if (activity !== lastActivity) {
+          lastActivity = activity;
+          send("activity", { text: activity });
+        }
+      }
       const file = state.sessions[session]?.transcript;
-      if (!file) return;
+      // Claude creates the transcript file only at the first message.
+      if (!file || !(await stat(file).catch(() => undefined))) return;
       if (sharingWith(session).length) {
         // Another window writes to this conversation too: show only this window's thread.
         if (branch?.file !== file) {

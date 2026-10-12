@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A message you send shows in the chat at once ("sending…"), including one typed while the agent is busy. That kind is queued by Claude and used to be missing from the chat entirely.
+- While the agent works, the chat shows its live status line, e.g. "✻ Determining… (8s · ↓ 89 tokens)" or Codex's "Working (8s)".
+
 ## 1.0.0 — 2026-10-12
 
 First release.

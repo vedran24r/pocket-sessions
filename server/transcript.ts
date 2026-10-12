@@ -97,6 +97,12 @@ export function parseLine(line: string): Item[] {
     return [];
   }
   if (entry.payload && typeof entry.type === "string" && !entry.message) return parseCodex(entry);
+  // A message typed while the agent is busy is queued: recorded here the moment it's sent, and
+  // again as a "queued_command" attachment when the agent takes it in (that copy is skipped).
+  if (entry.type === "queue-operation") {
+    const text = entry.operation === "enqueue" && typeof entry.content === "string" ? userText(entry.content) : null;
+    return text ? [{ k: "user", t: text, ts: entry.timestamp }] : [];
+  }
   if (entry.isSidechain || entry.isMeta || entry.isCompactSummary) return [];
   if (entry.type !== "user" && entry.type !== "assistant") return [];
   const ts: string | undefined = entry.timestamp;
