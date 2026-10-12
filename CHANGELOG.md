@@ -14,6 +14,7 @@ First release.
 - Sessions started outside Pocket appear view-only. **Continue on phone** starts a typeable copy, and shows the `pocket attach` command to open that copy on the laptop too.
 - Two windows on the same Claude conversation each show their own thread, with a note that the history is shared.
 - **End** closes a session from the phone; **Hide** removes a view-only one from the list.
+- Sessions are named after the conversation, and a `/rename` name always wins. **Rename** on the phone renames the session, and the phone and the laptop tab update together.
 - The terminal resizes to fit the phone while no laptop terminal is attached. Tab titles follow the agent's own title.
 - Any terminal agent works with `pocket run -- <cmd>`, with "went quiet" notifications.
 - Codex adapter: a Chat view, a push on every finished turn, view-only sessions, and Continue on phone via `codex fork`.

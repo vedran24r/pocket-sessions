@@ -252,22 +252,28 @@ export function anchorsOf(entry: any): string[] {
   });
 }
 
-/**
- * The conversation's name as Claude records it in the transcript: a title the person set
- * (custom-title) wins over the generated one (ai-title). Only the tail is read; the latest wins.
- */
-export async function conversationTitle(file: string): Promise<string | undefined> {
+export interface Titles {
+  /** Set with /rename. */
+  custom?: string;
+  /** Claude's generated title. */
+  ai?: string;
+}
+
+/** The latest title records in a Claude transcript. Only the tail is read; older records may be out of range. */
+export async function transcriptTitles(file: string): Promise<Titles> {
   const handle = await open(file, "r").catch(() => undefined);
-  if (!handle) return undefined;
+  if (!handle) return {};
   try {
     const { size } = await handle.stat();
     const length = Math.min(size, 512 * 1024);
     const buffer = Buffer.alloc(length);
     await handle.read(buffer, 0, length, size - length);
     const text = buffer.toString("utf8");
-    const last = (key: string) => [...text.matchAll(new RegExp(`"${key}":"((?:[^"\\\\]|\\\\.)*)"`, "g"))].at(-1)?.[1];
-    const raw = last("customTitle") ?? last("aiTitle");
-    return raw ? JSON.parse(`"${raw}"`) : undefined;
+    const last = (key: string) => {
+      const raw = [...text.matchAll(new RegExp(`"${key}":"((?:[^"\\\\]|\\\\.)*)"`, "g"))].at(-1)?.[1];
+      return raw ? (JSON.parse(`"${raw}"`) as string) : undefined;
+    };
+    return { custom: last("customTitle"), ai: last("aiTitle") };
   } finally {
     await handle.close();
   }

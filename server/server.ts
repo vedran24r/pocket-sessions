@@ -1,13 +1,13 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
 import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
-import { BranchView, conversationTitle, lastAssistantText, TranscriptTail } from "./transcript.ts";
+import { BranchView, lastAssistantText, TranscriptTail, transcriptTitles } from "./transcript.ts";
 
 const PORT = Number(process.env.POCKET_PORT ?? 8787);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
@@ -35,9 +35,24 @@ const agentOf = new Map<string, string>();
 const conversationOf = new Map<string, string>();
 // A title that's just the program or machine name says nothing about the conversation.
 const GENERIC_TITLES = /^(claude( code)?|codex|bash|zsh|-?zsh|tmux|[\w.-]+\.local)$/i;
+// Name priority: the person's /rename, then the terminal title (agents put the conversation name
+// there), then Claude's generated title, then the folder.
+const titleCache = new Map<string, { mtime: number; custom?: string; ai?: string }>();
+async function refreshTitle(session: string): Promise<void> {
+  const file = state.sessions[session]?.transcript;
+  if (!file) return;
+  const mtime = (await stat(file).catch(() => undefined))?.mtimeMs;
+  const cached = titleCache.get(file);
+  if (!mtime || cached?.mtime === mtime) return;
+  const titles = await transcriptTitles(file);
+  // A /rename long ago can fall outside the tail that's read; keep the one already seen.
+  titleCache.set(file, { mtime, custom: titles.custom ?? cached?.custom, ai: titles.ai ?? cached?.ai });
+}
 const displayTitle = (session: string) => {
-  const name = conversationOf.get(session) || state.sessions[session]?.conversation;
-  return name && !GENERIC_TITLES.test(name) ? name : short(session);
+  const file = state.sessions[session]?.transcript;
+  const titles = file ? titleCache.get(file) : undefined;
+  const pane = conversationOf.get(session);
+  return titles?.custom || (pane && !GENERIC_TITLES.test(pane) ? pane : undefined) || titles?.ai || short(session);
 };
 const statusListeners = new Map<string, Set<Listener>>();
 
@@ -83,9 +98,7 @@ async function handleHook(session: string, event: any, configDir: string, pid: n
     : event.hook_event_name === "Stop" && typeof event.last_assistant_message === "string" ? `reply:${event.last_assistant_message.trim()}`
     : undefined;
   if (anchor) info.anchors = [...(info.anchors ?? []), anchor].slice(-12);
-  if (!tmux.isTmux(session) && info.transcript && (event.hook_event_name === "Stop" || !info.conversation)) {
-    info.conversation = await conversationTitle(info.transcript);
-  }
+  await refreshTitle(session);
   const name = displayTitle(session);
   console.log(new Date().toISOString(), session, event.hook_event_name, event.notification_type ?? event.source ?? "");
 
@@ -228,6 +241,7 @@ async function listSessions() {
     conversationOf.set(session.name, session.conversation);
   }
   const readonly = Object.keys(state.sessions).filter((name) => !tmux.isTmux(name) && !state.sessions[name].movedTo && !state.sessions[name].hidden);
+  await Promise.all([...live.map((session) => session.name), ...readonly].map(refreshTitle));
   return [
     ...live.map((session) => describe(session.name, session.path, session.activity * 1000)),
     ...readonly.map((name) => describe(name, undefined, now)),
@@ -293,6 +307,7 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
     400,
     async (send) => {
       pushStatus = () => sendStatus(send);
+      await refreshTitle(session);
       sendStatus(send);
       const file = state.sessions[session]?.transcript;
       if (!file) return;
@@ -505,6 +520,9 @@ const server = http.createServer(async (req, res) => {
         const { text, submit = true } = await readJson(req);
         if (typeof text !== "string" || !text.trim()) return json(res, 400, { error: "empty" });
         await tmux.sendText(session, text, submit);
+        // /rename fires no hook, so the laptop tab would keep the old name until the next prompt.
+        const renamed = submit && text.trim().match(/^\/rename\s+(.+)$/)?.[1];
+        if (renamed) await tmux.renamePaneTitle(session, renamed.trim()).catch(() => {});
         if (submit) setStatus(session, profile, "working");
         return json(res, 200, { ok: true });
       }

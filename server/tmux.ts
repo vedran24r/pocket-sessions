@@ -136,6 +136,13 @@ export async function fitToPhone(session: string, cols: number, rows: number): P
   await run(["resize-window", "-t", `=${session}:`, "-x", String(cols), "-y", String(rows)]);
 }
 
+/** Replaces the conversation name in the pane title, keeping any leading status icons ("⚪ 🧩 old" → "⚪ 🧩 new"). */
+export async function renamePaneTitle(session: string, name: string): Promise<void> {
+  const current = (await run(["display-message", "-p", "-t", `=${session}:`, "#{pane_title}"])).trim();
+  const icons = current.match(/^[^\p{L}\p{N}]*/u)?.[0] ?? "";
+  await run(["select-pane", "-t", `=${session}:`, "-T", `${icons}${name}`]);
+}
+
 export function killSession(session: string): Promise<string> {
   return run(["kill-session", "-t", `=${session}`]);
 }

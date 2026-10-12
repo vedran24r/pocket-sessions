@@ -20,8 +20,6 @@ export interface SessionInfo {
   /** Read-only sessions: what's needed to resume the conversation inside tmux. */
   sessionId?: string;
   configDir?: string;
-  /** The conversation's name from its transcript, for sessions with no tmux window title. */
-  conversation?: string;
   /** "claude" when absent. */
   agent?: string;
   codexHome?: string;

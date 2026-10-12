@@ -205,6 +205,18 @@ function renderSession(name: string) {
   const termTab = h("button", { class: "tab", textContent: "Terminal" });
   const back = h("a", { class: "back", href: "#/", textContent: "‹" });
   const end = h("button", { class: "end", textContent: readonly ? "Hide" : "End" });
+  // Renaming types /rename into the session, so the laptop tab and the phone pick up the same name.
+  const rename = h("button", { class: "end", textContent: "Rename", hidden: true });
+  rename.onclick = async () => {
+    const newName = prompt("New name for this session (shows on the phone and in the laptop tab):", titleEl.textContent ?? "")?.trim();
+    if (!newName) return;
+    try {
+      await api(`/api/sessions/${name}/send`, { text: `/rename ${newName}` });
+      titleEl.textContent = newName;
+    } catch (err) {
+      toast((err as Error).message);
+    }
+  };
   end.onclick = async () => {
     const question = readonly
       ? "Hide this session from the list? It comes back when you next use it."
@@ -251,7 +263,7 @@ function renderSession(name: string) {
   );
 
   app.replaceChildren(
-    h("header", { class: "bar" }, back, titleEl, statusEl, end),
+    h("header", { class: "bar" }, back, titleEl, statusEl, rename, end),
     ...(tabs ? [tabs] : []),
     shared,
     chat,
@@ -274,6 +286,7 @@ function renderSession(name: string) {
   chatSource.addEventListener("status", (event) => {
     const { status, note, title: liveTitle, agent, hasChat, sharedWith } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string; hasChat?: boolean; sharedWith?: string[] };
     if (liveTitle) titleEl.textContent = liveTitle;
+    rename.hidden = readonly || (agent ?? "claude") !== "claude";
     shared.hidden = !sharedWith?.length;
     shared.textContent = sharedWith?.length
       ? `This conversation is also open in ${sharedWith.join(", ")}. Both windows write to the same history, so you're seeing only this window's thread. Start one of them with a fresh claude to keep them apart.`
