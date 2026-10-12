@@ -180,6 +180,7 @@ function takeOverBar(name: string): HTMLElement {
     button.textContent = "Starting…";
     try {
       const { name: typeable } = await api<{ name: string }>(`/api/sessions/${name}/takeover`, {});
+      alert(`Copy started. To have this copy on your laptop too, run this in a new terminal tab:\n\npocket attach ${typeable}\n\nThen close the old window, so you only use one of them.`);
       location.hash = `#/s/${typeable}`;
     } catch (err) {
       toast((err as Error).message);
@@ -190,7 +191,7 @@ function takeOverBar(name: string): HTMLElement {
   return h(
     "footer",
     { class: "composer readonly-note" },
-    h("p", {}, "This session was started outside pocket, so it's view only. Continue it here: the conversation resumes in a new session on your computer that you can type into. The original window stays as it is."),
+    h("p", {}, "This window was opened outside pocket, so the phone can only watch it. Continue on phone starts a copy of this conversation that you can type into from here. Messages to the copy won't appear in the original window."),
     button,
   );
 }

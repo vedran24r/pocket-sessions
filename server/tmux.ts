@@ -30,12 +30,13 @@ export interface TmuxSession {
   activity: number;
   path: string;
   created: number;
+  conversation: string;
 }
 
 export async function listSessions(): Promise<TmuxSession[]> {
   let out: string;
   try {
-    out = await run(["list-sessions", "-F", ["#{session_name}", "#{session_attached}", "#{session_activity}", "#{pane_current_path}", "#{@pocket_agent}", "#{session_created}"].join(SEP)]);
+    out = await run(["list-sessions", "-F", ["#{session_name}", "#{session_attached}", "#{session_activity}", "#{pane_current_path}", "#{@pocket_agent}", "#{session_created}", "#{pane_title}"].join(SEP)]);
   } catch {
     return []; // no tmux server running yet
   }
@@ -43,8 +44,10 @@ export async function listSessions(): Promise<TmuxSession[]> {
     .split("\n")
     .filter((line) => line.startsWith("pk-"))
     .map((line) => {
-      const [name, attached, activity, cwd, agent, created] = line.split(SEP);
-      return { name, agent: agent || "claude", attached: attached !== "0", activity: Number(activity), path: cwd, created: Number(created) * 1000 };
+      const [name, attached, activity, cwd, agent, created, paneTitle] = line.split(SEP);
+      return {
+        // Agents put the conversation's name in the terminal title, behind status icons ("🟠 💻 fix-login").
+        conversation: (paneTitle ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim(), name, agent: agent || "claude", attached: attached !== "0", activity: Number(activity), path: cwd, created: Number(created) * 1000 };
     });
 }
 

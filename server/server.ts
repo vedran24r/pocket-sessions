@@ -32,6 +32,13 @@ const TOKEN = hookToken();
 
 type Listener = () => void;
 const agentOf = new Map<string, string>();
+const conversationOf = new Map<string, string>();
+// A title that's just the program or machine name says nothing about the conversation.
+const GENERIC_TITLES = /^(claude( code)?|codex|bash|zsh|-?zsh|tmux|[\w.-]+\.local)$/i;
+const displayTitle = (session: string) => {
+  const name = conversationOf.get(session);
+  return name && !GENERIC_TITLES.test(name) ? name : short(session);
+};
 const statusListeners = new Map<string, Set<Listener>>();
 
 function profileOf(session: string): string {
@@ -202,7 +209,7 @@ async function listSessions() {
     const info = state.sessions[name];
     return {
       name,
-      title: short(name),
+      title: displayTitle(name),
       profile: profileOf(name),
       status: info?.status ?? "idle",
       statusAt: info?.statusAt ?? fallbackAt,
@@ -213,7 +220,10 @@ async function listSessions() {
       hasChat: !!info?.transcript,
     };
   };
-  for (const session of live) agentOf.set(session.name, session.agent);
+  for (const session of live) {
+    agentOf.set(session.name, session.agent);
+    conversationOf.set(session.name, session.conversation);
+  }
   const readonly = Object.keys(state.sessions).filter((name) => !tmux.isTmux(name) && !state.sessions[name].movedTo && !state.sessions[name].hidden);
   return [
     ...live.map((session) => describe(session.name, session.path, session.activity * 1000)),
@@ -264,7 +274,7 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
 
   const sendStatus = (send: (event: string, data: unknown) => void) => {
     const info = state.sessions[session];
-    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: short(session), agent: agentOf.get(session) ?? info?.agent ?? "claude", hasChat: !!info?.transcript, sharedWith: sharingWith(session) };
+    const status = { status: info?.status ?? "idle", statusAt: info?.statusAt, note: info?.note, title: displayTitle(session), agent: agentOf.get(session) ?? info?.agent ?? "claude", hasChat: !!info?.transcript, sharedWith: sharingWith(session) };
     const key = JSON.stringify(status);
     if (key !== lastStatus) {
       lastStatus = key;
