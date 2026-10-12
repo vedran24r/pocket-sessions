@@ -80,7 +80,7 @@ Re-run it any time to update or repair; it's safe to run twice. Add `--yes` to s
 2. Inside Ubuntu, run the command above. If it asks to switch on systemd, say yes, run `wsl --shutdown` in PowerShell, reopen Ubuntu and run it again.
 3. Start your Claude sessions inside Ubuntu, not in PowerShell.
 
-Native Windows (Claude Code started from PowerShell) isn't supported.
+Native Windows (Claude Code started from PowerShell) isn't supported. WSL hasn't been tested on a real Windows machine yet. If you try it, please [open an issue](https://github.com/vedran24r/pocket-sessions/issues) with how it went.
 
 **On the phone** (the installer reminds you):
 
