@@ -18,4 +18,4 @@ First release.
 - The terminal resizes to fit the phone while no laptop terminal is attached. Tab titles follow the agent's own title.
 - Any terminal agent works with `pocket run -- <cmd>`, with "went quiet" notifications.
 - Codex adapter: a Chat view, a push on every finished turn, view-only sessions, and Continue on phone via `codex fork`.
-- One-command install on macOS (launchd) and Linux (systemd user service; the Linux path is lint-checked but not yet run on a real Linux machine). Pocket is reachable only over your Tailscale network, and only your Tailscale login can open it.
+- One-line install (`curl … | bash`) for macOS, Linux and Windows through WSL2. It installs anything missing (git, curl, tmux, Node, Tailscale, Claude Code) after asking once, adds the shell wrapper, waits for you at the steps only you can do, and ends with a summary and a QR code for the phone. The Linux and WSL paths are lint-checked but not yet run on a real machine. Pocket is reachable only over your Tailscale network, and only your Tailscale login can open it.

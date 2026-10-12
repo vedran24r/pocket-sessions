@@ -54,30 +54,66 @@ Add a wrapper like `codex() { pocket run -- codex "$@"; }` to make it automatic 
 
 Adapters for more agents are welcome: one parser in `server/transcript.ts` and one notifier in `hooks/`.
 
-## Requirements
-
-- **Computer:** macOS (launchd) or Linux (systemd user service), with Claude Code (or another terminal agent), Node 23.6+, tmux (`brew install tmux` / `apt install tmux`), git, curl and [Tailscale](https://tailscale.com/download)
-- **Phone:** the Tailscale app, signed in to the same tailnet, and a browser that can install web apps and receive push: Chrome on Android, or Safari on iOS 16.4+ (on iOS, push only works after **Add to Home Screen**)
-- Linux only: let your user manage Tailscale once with `sudo tailscale set --operator=$USER`, and run `sudo loginctl enable-linger $USER` if sessions should stay reachable while you're logged out
-- In the Tailscale admin console: **MagicDNS**, **HTTPS certificates** and **Serve** enabled. The first `tailscale serve` prints the link if they aren't.
-
 ## Install
 
-```bash
-git clone https://github.com/vedran24r/pocket-sessions.git ~/Projects/pocket-sessions
-cd ~/Projects/pocket-sessions
-scripts/install.sh                          # or: scripts/install.sh ~/.claude ~/.claude-work   (several config dirs)
-```
-
-Then add the wrapper to `~/.zshrc` (the installer prints this too):
+**macOS, Linux, or Windows (through WSL2)** — one command:
 
 ```bash
-claude() { ~/.local/bin/pocket run "$@"; }
+curl -fsSL https://raw.githubusercontent.com/vedran24r/pocket-sessions/main/scripts/bootstrap.sh | bash
 ```
+
+It downloads Pocket to `~/pocket-sessions` and runs the installer, which:
+
+- **installs what's missing, after asking once:** git, curl, tmux, Node, Tailscale and Claude Code (Homebrew on a Mac; apt, dnf or pacman on Linux)
+- sets up the Claude Code hooks (in `~/.claude` and any `~/.claude-*` config dirs), plus the Codex notifier if Codex is installed
+- starts the server in the background (launchd on macOS, a systemd user service on Linux and WSL)
+- publishes it on your tailnet
+- adds the `claude()` wrapper to your shell, so every new session is phone-ready
+
+Where only you can act, such as signing in to Tailscale or switching on the tailnet's HTTPS, it says exactly what to do and waits for Enter. It ends with what it did, what's left (the phone steps), and a QR code to open the app on your phone.
+
+Re-run it any time to update or repair; it's safe to run twice. Add `--yes` to skip the questions.
+
+**Windows:** Pocket needs tmux, which Windows doesn't have, so it runs inside WSL2 (Windows' built-in Linux). Claude Code runs there too.
+
+1. Open PowerShell as administrator and run `wsl --install`. Restart if asked, then open **Ubuntu**.
+2. Inside Ubuntu, run the command above. If it asks to switch on systemd, say yes, run `wsl --shutdown` in PowerShell, reopen Ubuntu and run it again.
+3. Start your Claude sessions inside Ubuntu, not in PowerShell.
+
+Native Windows (Claude Code started from PowerShell) isn't supported.
+
+**On the phone** (the installer reminds you):
+
+1. Install the Tailscale app and sign in to the same account.
+2. Open the address the installer printed, or scan its QR code.
+3. Browser menu → **Add to Home screen**. Open the app from there and tap **🔔 Enable alerts**.
+
+Use Chrome on Android, or Safari on iOS 16.4+. On iPhone, alerts only work from the Home Screen icon.
+
+### Setup notes for AI assistants
+
+If someone asks you (an AI coding assistant) to install Pocket Sessions for them, everything below is what it needs:
+
+- **Supported:** macOS 13+, Linux with systemd, Windows only through WSL2 (run everything inside the WSL distro).
+- **Command:** `curl -fsSL https://raw.githubusercontent.com/vedran24r/pocket-sessions/main/scripts/bootstrap.sh | bash`. It is interactive: it reads answers from `/dev/tty`, and pauses for the person at the Tailscale sign-in and admin steps. Pass `--yes` to accept every install question.
+- **Installed automatically if missing:** git, curl, tmux, Node ≥ 23.6 (Homebrew `node`, NodeSource 24 on apt/dnf, `nodejs` on pacman), Tailscale (`brew install --cask tailscale-app`, or tailscale.com/install.sh on Linux), Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`). On a Mac with no Homebrew, it offers the official Homebrew installer.
+- **Steps the person must do themselves:**
+  - sign in to Tailscale (a browser login)
+  - in the Tailscale admin console, enable **MagicDNS**, **HTTPS Certificates** and **Serve** (https://login.tailscale.com/admin/dns)
+  - on WSL, restart WSL once if systemd had to be switched on
+  - sign in to Claude Code the first time it runs
+  - the phone steps above
+- **Changes it makes:**
+  - `~/pocket-sessions` (the code) and `~/.pocket-sessions/` (state and logs)
+  - a `pocket` link in `~/.local/bin`
+  - hook entries in each Claude config dir's `settings.json` (backed up as `settings.json.bak-pocket`)
+  - a `notify` line in `~/.codex/config.toml` if Codex is present
+  - a launchd agent `ai.pocket-sessions` or a systemd user unit `pocket-sessions.service`
+  - `tailscale serve` on HTTPS port 443 → 127.0.0.1:8787
+  - a marked `# >>> pocket-sessions >>>` block in `~/.zshrc` or `~/.bashrc` (backed up as `.bak-pocket`)
+- **Checking it worked:** the installer's summary lists ✓ for every step. The web app answers at `https://<machine>.<tailnet>.ts.net`, and a new terminal's `type claude` shows the wrapper function.
 
 Aliases that set `CLAUDE_CONFIG_DIR` and then call `claude` keep working. The profile name shown on the phone comes from the config dir (`~/.claude-work` → `work`), or from `POCKET_PROFILE`.
-
-On the phone: open the `https://<your-mac>.<tailnet>.ts.net` address the installer printed. Then browser menu → **Add to Home screen**, open the app, and tap **🔔 Enable alerts**.
 
 ## Everyday use
 
