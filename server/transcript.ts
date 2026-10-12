@@ -251,3 +251,24 @@ export function anchorsOf(entry: any): string[] {
     return [];
   });
 }
+
+/**
+ * The conversation's name as Claude records it in the transcript: a title the person set
+ * (custom-title) wins over the generated one (ai-title). Only the tail is read; the latest wins.
+ */
+export async function conversationTitle(file: string): Promise<string | undefined> {
+  const handle = await open(file, "r").catch(() => undefined);
+  if (!handle) return undefined;
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(size, 512 * 1024);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    const text = buffer.toString("utf8");
+    const last = (key: string) => [...text.matchAll(new RegExp(`"${key}":"((?:[^"\\\\]|\\\\.)*)"`, "g"))].at(-1)?.[1];
+    const raw = last("customTitle") ?? last("aiTitle");
+    return raw ? JSON.parse(`"${raw}"`) : undefined;
+  } finally {
+    await handle.close();
+  }
+}

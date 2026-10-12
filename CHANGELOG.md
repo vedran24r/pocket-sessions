@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- View-only sessions show their conversation name too, read from Claude's transcript.
+
 ## 1.0.1 — 2026-10-12
 
 - Sessions are listed by their conversation's name (e.g. "Scalability and performance metrics baseline"), not only by folder, so copies and duplicates are easy to tell apart.

@@ -7,7 +7,7 @@ import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
 import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
-import { BranchView, lastAssistantText, TranscriptTail } from "./transcript.ts";
+import { BranchView, conversationTitle, lastAssistantText, TranscriptTail } from "./transcript.ts";
 
 const PORT = Number(process.env.POCKET_PORT ?? 8787);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
@@ -36,7 +36,7 @@ const conversationOf = new Map<string, string>();
 // A title that's just the program or machine name says nothing about the conversation.
 const GENERIC_TITLES = /^(claude( code)?|codex|bash|zsh|-?zsh|tmux|[\w.-]+\.local)$/i;
 const displayTitle = (session: string) => {
-  const name = conversationOf.get(session);
+  const name = conversationOf.get(session) || state.sessions[session]?.conversation;
   return name && !GENERIC_TITLES.test(name) ? name : short(session);
 };
 const statusListeners = new Map<string, Set<Listener>>();
@@ -83,7 +83,10 @@ async function handleHook(session: string, event: any, configDir: string, pid: n
     : event.hook_event_name === "Stop" && typeof event.last_assistant_message === "string" ? `reply:${event.last_assistant_message.trim()}`
     : undefined;
   if (anchor) info.anchors = [...(info.anchors ?? []), anchor].slice(-12);
-  const name = short(session);
+  if (!tmux.isTmux(session) && info.transcript && (event.hook_event_name === "Stop" || !info.conversation)) {
+    info.conversation = await conversationTitle(info.transcript);
+  }
+  const name = displayTitle(session);
   console.log(new Date().toISOString(), session, event.hook_event_name, event.notification_type ?? event.source ?? "");
 
   switch (event.hook_event_name) {
