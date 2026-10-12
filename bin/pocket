@@ -5,6 +5,7 @@
 #   pocket run -- <cmd> [args...]  any other terminal agent: codex, gemini, aider, opencode, ...
 #   pocket attach <name>           reattach to a session you detached from (prefix + d)
 #   pocket ls                      list sessions
+#   pocket link [--url <address>]  the phone's access link and QR code (--url sets your own HTTPS address)
 #
 # Closing the terminal window ends its session; set POCKET_KEEP_ON_CLOSE=1 to keep it running instead.
 # Claude's label comes from POCKET_PROFILE, else CLAUDE_CONFIG_DIR (~/.claude-game → "game"), else "claude".
@@ -84,6 +85,17 @@ cmd_run_claude_passthrough() {
 case "${1:-}" in
   run) shift; cmd_run "$@" ;;
   attach) attach "${2:?usage: pocket attach <session>}" ;;
+  link)
+    STATE="${POCKET_STATE_DIR:-$HOME/.pocket-sessions}"
+    if [[ "${2:-}" == "--url" && -n "${3:-}" ]]; then printf '%s\n' "${3%/}" >"$STATE/url"; fi
+    url="$(cat "$STATE/url" 2>/dev/null)" || { echo "No address yet: run the installer first." >&2; exit 1; }
+    key="$(cat "$STATE/access-key" 2>/dev/null)" || { echo "No access key yet: the server creates it on first start." >&2; exit 1; }
+    link="$url/?key=$key"
+    echo "$link"
+    echo "Open it once on your phone (or scan the code); the phone stays signed in. Keep it private: it opens your sessions."
+    node -e "require('qrcode-terminal').generate(process.argv[1], { small: true })" "$link" 2>/dev/null ||
+      (cd "$POCKET_DIR" && node -e "require('qrcode-terminal').generate(process.argv[1], { small: true })" "$link") || true
+    ;;
   ls) "${T[@]}" list-sessions -F '#{session_name}  #{?session_attached,(attached),}' 2>/dev/null | grep '^pk-' || echo "no sessions" ;;
-  *) sed -n '3,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '3,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

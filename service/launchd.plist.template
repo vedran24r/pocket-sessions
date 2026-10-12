@@ -14,6 +14,7 @@
     <key>PATH</key><string>{{PATH}}</string>
     <!-- launchd starts processes without a locale; tmux needs UTF-8 to pass Claude's output through. -->
     <key>LANG</key><string>en_US.UTF-8</string>
+    <key>POCKET_HOST</key><string>{{HOST}}</string>
     <key>POCKET_USERS</key><string>{{USERS}}</string>
   </dict>
   <key>RunAtLoad</key><true/>

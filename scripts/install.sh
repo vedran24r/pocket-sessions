@@ -73,7 +73,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 TS="$(command -v tailscale || true)"
 [[ -z "$TS" && -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]] && TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
 
-node_ok() { command -v node >/dev/null && node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>23||(a===23&&b>=6)?0:1)'; }
+node_ok() { command -v node >/dev/null && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 26 ? 0 : 1)'; }
 
 bold "Pocket Sessions installer ($PLATFORM)"
 
@@ -92,8 +92,7 @@ missing=()
 command -v git >/dev/null || missing+=(git)
 command -v curl >/dev/null || missing+=(curl)
 command -v tmux >/dev/null || missing+=(tmux)
-node_ok || missing+=("node (23.6 or newer)")
-[[ -n "$TS" ]] || missing+=(tailscale)
+node_ok || missing+=("node 26")
 
 if ((${#missing[@]})); then
   say "Missing: ${missing[*]}"
@@ -104,31 +103,22 @@ if ((${#missing[@]})); then
   case "$PM" in
     brew)
       ((${#pkgs[@]})) && brew install "${pkgs[@]}"
-      node_ok || brew install node
-      if [[ -z "$TS" ]]; then
-        brew install --cask tailscale-app
-        TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
-      fi ;;
+      node_ok || brew install node ;;
     apt)
       $SUDO apt-get update -qq
       ((${#pkgs[@]})) && $SUDO apt-get install -y "${pkgs[@]}"
-      if ! node_ok; then curl -fsSL https://deb.nodesource.com/setup_24.x | $SUDO -E bash - && $SUDO apt-get install -y nodejs; fi ;;
+      if ! node_ok; then curl -fsSL https://deb.nodesource.com/setup_26.x | $SUDO -E bash - && $SUDO apt-get install -y nodejs; fi ;;
     dnf)
       ((${#pkgs[@]})) && $SUDO dnf install -y "${pkgs[@]}"
-      if ! node_ok; then curl -fsSL https://rpm.nodesource.com/setup_24.x | $SUDO -E bash - && $SUDO dnf install -y nodejs; fi ;;
+      if ! node_ok; then curl -fsSL https://rpm.nodesource.com/setup_26.x | $SUDO -E bash - && $SUDO dnf install -y nodejs; fi ;;
     pacman)
       $SUDO pacman -S --needed --noconfirm ${pkgs[@]+"${pkgs[@]}"} nodejs npm ;;
   esac
-  if [[ -z "$TS" && $PLATFORM != mac ]]; then
-    curl -fsSL https://tailscale.com/install.sh | sh
-    TS="$(command -v tailscale)"
-  fi
   hash -r
 fi
-node_ok || die "Node 23.6+ is still missing. Install it from https://nodejs.org, then run this again."
+node_ok || die "Node 26 is still missing. Install it from https://nodejs.org, then run this again."
 command -v tmux >/dev/null || die "tmux is still missing. Install it, then run this again."
-[[ -n "$TS" ]] || die "Tailscale is still missing. Install it from https://tailscale.com/download, then run this again."
-ok "Tools: git, curl, tmux, Node $(node -v), Tailscale"
+ok "Tools: git, curl, tmux, Node $(node -v)"
 
 # ---------- 2. Claude Code ----------
 if ! command -v claude >/dev/null; then
@@ -144,10 +134,28 @@ else
   manual "Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash   (then run claude once to sign in)"
 fi
 
-# ---------- 3. Tailscale sign-in ----------
+# ---------- 3. network ----------
+# The phone has to reach this computer: any shared network works (home Wi-Fi, a VPN you already
+# run). Tailscale is the recommended one: it joins both into one private network from anywhere,
+# and gives the HTTPS address phones need to install the app and receive notifications.
 ts_json() { "$TS" status --json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);console.log($1)}catch{}})"; }
 ts_ready() { [[ "$(ts_json 'j.BackendState')" == "Running" ]]; }
-
+NETWORK="${POCKET_NETWORK:-}"
+if [[ -z "$NETWORK" ]]; then
+  say "Your phone and this computer need to be on the same network."
+  echo "   Tailscale (recommended) does that from anywhere, and gives the HTTPS address the phone app needs."
+  echo "   Or use the network you already have (home Wi-Fi, your own VPN)."
+  if ask "Use Tailscale?$([[ -z "$TS" ]] && echo " (it will be installed)")"; then NETWORK=tailscale; else NETWORK=own; fi
+fi
+if [[ $NETWORK == tailscale && -z "$TS" ]]; then
+  case "$PLATFORM" in
+    mac) brew install --cask tailscale-app && TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale ;;
+    *) curl -fsSL https://tailscale.com/install.sh | sh && TS="$(command -v tailscale)" ;;
+  esac
+  [[ -n "$TS" ]] || die "Tailscale didn't install. Get it from https://tailscale.com/download, or run this again and choose your own network."
+fi
+LOGIN=""
+if [[ $NETWORK == tailscale ]]; then
 if [[ $PLATFORM != mac ]]; then
   # Linux/WSL: let this user run `tailscale serve` without sudo.
   if ! systemctl is-active --quiet tailscaled 2>/dev/null; then $SUDO systemctl enable --now tailscaled 2>/dev/null || true; fi
@@ -166,6 +174,7 @@ ts_ready || die "Tailscale isn't signed in. Sign in, then run this again."
 [[ $PLATFORM != mac ]] && $SUDO "$TS" set --operator="$USER" 2>/dev/null || true
 LOGIN="$(ts_json 'j.User[String(j.Self.UserID)].LoginName')"
 ok "Tailscale signed in as $LOGIN"
+fi
 
 # ---------- 4. Pocket itself ----------
 say "Building Pocket"
@@ -189,7 +198,7 @@ fi
 
 # ---------- 5. background service ----------
 fill() {
-  sed -e "s|{{NODE}}|$(command -v node)|" -e "s|{{ROOT}}|$ROOT|g" -e "s|{{HOME}}|$HOME|g" -e "s|{{USERS}}|$LOGIN|" \
+  sed -e "s|{{NODE}}|$(command -v node)|" -e "s|{{ROOT}}|$ROOT|g" -e "s|{{HOME}}|$HOME|g" -e "s|{{USERS}}|$LOGIN|" -e "s|{{HOST}}|$([[ $NETWORK == own ]] && echo 0.0.0.0 || echo 127.0.0.1)|" \
     -e "s|{{PATH}}|$(dirname "$(command -v tmux)"):$(dirname "$(command -v node)"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin|" "$1"
 }
 if [[ $PLATFORM == mac ]]; then
@@ -219,8 +228,9 @@ else
   ok "Server runs in the background (systemd user service)"
 fi
 
-# ---------- 6. publish on the tailnet ----------
+# ---------- 6. publish ----------
 served=0
+if [[ $NETWORK == tailscale ]]; then
 for _ in 1 2 3; do
   if "$TS" serve --bg 8787 >/dev/null 2>&1; then served=1; break; fi
   say "Your tailnet needs three switches on (one time, in your browser):"
@@ -234,6 +244,18 @@ if [[ $served == 1 ]]; then
 else
   manual "Enable MagicDNS + HTTPS Certificates at https://login.tailscale.com/admin/dns, then run: $TS serve --bg 8787"
 fi
+else
+  case "$PLATFORM" in
+    mac) IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)" ;;
+    *) IP="$(hostname -I 2>/dev/null | awk '{print $1}')" ;;
+  esac
+  URL="http://${IP:-<this-computer-ip>}:8787"
+  served=1
+  ok "Listening on your network at $URL (only phones with the access link can open it)"
+  manual "Plain http works for chatting and the terminal. To install the app and get notifications, phones need HTTPS: put an HTTPS proxy you already run in front of port 8787 and set its address with: pocket link --url https://your-address"
+  [[ $PLATFORM == wsl ]] && manual "WSL: let your phone reach WSL by turning on mirrored networking: in Windows, add [wsl2] networkingMode=mirrored to %UserProfile%\\.wslconfig, run wsl --shutdown, reopen Ubuntu."
+fi
+printf '%s\n' "$URL" >"$HOME/.pocket-sessions/url"
 
 # ---------- 7. shell wrapper ----------
 RC="$HOME/.zshrc"; [[ "${SHELL:-}" == */bash ]] && RC="$HOME/.bashrc"
@@ -262,10 +284,14 @@ bold "Left for you (about 2 minutes):"
 step=1
 for line in ${MANUAL[@]+"${MANUAL[@]}"}; do echo "  $step. $line"; step=$((step + 1)); done
 echo "  $step. Open a NEW terminal tab (so the wrapper loads) and start claude as usual."; step=$((step + 1))
-echo "  $step. On your phone: install Tailscale, sign in as $LOGIN."; step=$((step + 1))
-echo "  $step. On your phone, open $URL (or scan the code below), then: browser menu → Add to Home screen → open it → tap 🔔 Enable alerts."
+if [[ $NETWORK == tailscale ]]; then
+  echo "  $step. On your phone: install Tailscale, sign in as $LOGIN."; step=$((step + 1))
+else
+  echo "  $step. Put your phone on the same network as this computer."; step=$((step + 1))
+fi
+echo "  $step. On your phone, scan the code below (or open the link from: pocket link), then: browser menu → Add to Home screen → open it → tap 🔔 Enable alerts."
 echo "     (iPhone: Safari, iOS 16.4+, and alerts only work from the Home Screen icon.)"
 if [[ $served == 1 ]]; then
   echo
-  node -e "require('qrcode-terminal').generate(process.argv[1], { small: true })" "$URL" 2>/dev/null || true
+  "$ROOT/bin/pocket" link 2>/dev/null || true
 fi

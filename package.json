@@ -25,6 +25,6 @@
   "license": "MIT",
   "repository": "github:vedran24r/pocket-sessions",
   "engines": {
-    "node": ">=23.6"
+    "node": ">=26"
   }
 }

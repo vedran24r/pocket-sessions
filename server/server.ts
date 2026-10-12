@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
+import { acceptAccessLink, allowed } from "./access.ts";
 import { changedFiles, fileDiff } from "./changes.ts";
 import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
@@ -15,15 +16,10 @@ import { BranchView, lastAssistantText, TranscriptTail, transcriptTitles } from 
 
 const PORT = Number(process.env.POCKET_PORT ?? 8787);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
-// Every non-hook request must arrive through `tailscale serve`, which stamps the caller's identity.
-// The server binds to localhost only, so that header can't come from anywhere else.
+// 127.0.0.1 when a proxy on this machine publishes the app (Tailscale, or your own HTTPS proxy);
+// 0.0.0.0 to answer phones on your own network directly. Who gets in is decided in access.ts.
+const HOST = process.env.POCKET_HOST ?? "127.0.0.1";
 const DEV = process.env.POCKET_DEV === "1";
-const ALLOWED_USERS = (process.env.POCKET_USERS ?? "").split(",").map((user) => user.trim()).filter(Boolean);
-// Anyone who can open the app can type into your sessions, so an empty allow-list is a mistake, not "allow all".
-if (!DEV && ALLOWED_USERS.length === 0) {
-  console.error("POCKET_USERS is empty. Set it to your Tailscale login (scripts/install.sh does this).");
-  process.exit(1);
-}
 // Profiles whose pushes include Claude's reply text ("*" = all). Narrow it for profiles whose
 // sessions may hold data you don't want on a lock screen.
 const PREVIEW_PROFILES = new Set((process.env.POCKET_PREVIEW_PROFILES ?? "*").split(",").map((profile) => profile.trim()));
@@ -457,12 +453,6 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, pathname: 
   createReadStream(file).on("error", () => res.end()).pipe(res);
 }
 
-function allowed(req: IncomingMessage): boolean {
-  if (DEV) return true;
-  const login = req.headers["tailscale-user-login"];
-  if (typeof login !== "string" || !login) return false;
-  return ALLOWED_USERS.includes(login);
-}
 
 /**
  * Agents without hooks (anything but Claude) get their status from the screen: output that keeps
@@ -539,7 +529,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!allowed(req)) return json(res, 403, { error: "open this through tailscale serve" });
+    if (parts[0] !== "api" && req.method === "GET" && acceptAccessLink(req, res, url)) return;
+    if (!DEV && !allowed(req)) {
+      if (parts[0] === "api") return json(res, 403, { error: "Not signed in on this phone. Open the access link from `pocket link` once." });
+      res.writeHead(403, { "content-type": "text/html; charset=utf-8" });
+      return void res.end(`<!doctype html><meta name="viewport" content="width=device-width"><body style="font:16px system-ui;padding:24px;background:#14120f;color:#ece6dc"><h2>Pocket</h2><p>This phone isn't signed in yet. On your computer run <code>pocket link</code> and open the link it shows (or scan its QR code).</p>`);
+    }
 
     if (parts[0] !== "api") return serveStatic(req, res, url.pathname);
 
@@ -637,4 +632,4 @@ const server = http.createServer(async (req, res) => {
 tmux.startServerIfNeeded();
 void pruneUploads();
 setInterval(() => void pruneUploads(), 6 * 3600_000);
-server.listen(PORT, "127.0.0.1", () => console.log(`pocket listening on http://127.0.0.1:${PORT}${DEV ? " (dev, no auth)" : ""}`));
+server.listen(PORT, HOST, () => console.log(`pocket listening on http://${HOST}:${PORT}${DEV ? " (dev, no auth)" : ""}`));

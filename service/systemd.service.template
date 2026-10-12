@@ -8,6 +8,7 @@ WorkingDirectory={{ROOT}}
 Environment=PATH={{PATH}}
 # tmux needs a UTF-8 locale to pass agents' output through unmangled.
 Environment=LANG=C.UTF-8
+Environment=POCKET_HOST={{HOST}}
 Environment=POCKET_USERS={{USERS}}
 Restart=always
 RestartSec=2
