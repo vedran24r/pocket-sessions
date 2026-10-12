@@ -96,6 +96,8 @@ export const KEYS: Record<string, string[]> = {
   esc: ["Escape"],
   enter: ["Enter"],
   up: ["Up"],
+  left: ["Left"],
+  right: ["Right"],
   down: ["Down"],
   tab: ["Tab"],
   stab: ["BTab"],
@@ -192,6 +194,26 @@ export async function permissionChoice(session: string, choice: "allow" | "deny"
   const word = choice === "allow" ? /^yes\b/i : /^no\b/i;
   const candidates = options.filter((option) => word.test(option.text) && !STICKY.test(option.text));
   return candidates[0]?.key;
+}
+
+export type MouseAction = "click" | "wheel-up" | "wheel-down";
+
+/**
+ * Sends a tap or swipe from the phone as a real mouse event (SGR encoding), the way a desktop
+ * terminal would. Only when the program on screen has turned mouse reporting on: otherwise the
+ * escape sequence would arrive as typed text (in a shell, for instance). Returns whether it was sent.
+ */
+export async function sendMouse(session: string, action: MouseAction, col: number, row: number): Promise<boolean> {
+  const flags = await run(["display-message", "-p", "-t", `=${session}:`, "#{mouse_any_flag}#{mouse_button_flag}#{mouse_standard_flag} #{mouse_sgr_flag} #{pane_width} #{pane_height}"]);
+  const [tracking, sgr, width, height] = flags.trim().split(" ");
+  if (!/1/.test(tracking) || sgr !== "1") return false;
+  const x = Math.min(Math.max(1, Math.round(col)), Number(width));
+  const y = Math.min(Math.max(1, Math.round(row)), Number(height));
+  const esc = "\x1b";
+  const sequence =
+    action === "click" ? `${esc}[<0;${x};${y}M${esc}[<0;${x};${y}m` : `${esc}[<${action === "wheel-up" ? 64 : 65};${x};${y}M`;
+  await run(["send-keys", "-t", `=${session}:`, "-l", sequence]);
+  return true;
 }
 
 export function killSession(session: string): Promise<string> {

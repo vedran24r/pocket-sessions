@@ -434,6 +434,8 @@ function renderSession(name: string) {
       ["enter", "⏎"],
       ["up", "↑"],
       ["down", "↓"],
+      ["left", "←"],
+      ["right", "→"],
       ["stab", "⇧Tab"],
       ["ctrlc", "^C"],
     ].map(([key, label]) => {
@@ -540,7 +542,10 @@ function renderSession(name: string) {
     const [{ Terminal }] = await Promise.all([import("@xterm/xterm"), import("@xterm/xterm/css/xterm.css")]);
     if (chat.hidden === false) return; // switched back to Chat while loading
     term ??= new Terminal({ fontSize, disableStdin: true, scrollback: 0, cursorBlink: false, theme: { background: "#14120f" }, fontFamily });
-    if (!term.element) term.open(termInner);
+    if (!term.element) {
+      term.open(termInner);
+      enableTouch(term);
+    }
     const { cols, rows } = phoneGrid();
     screenSource?.close();
     screenSource = new EventSource(`/api/sessions/${name}/screen?cols=${cols}&rows=${rows}`);
@@ -554,6 +559,62 @@ function renderSession(name: string) {
     screenSource?.close();
     screenSource = undefined;
   };
+  // Taps on the Terminal tab become mouse clicks and vertical swipes become scroll-wheel steps, so
+  // menus like /status (tabs) and /config (long lists) work by touch. Sideways swipes still pan.
+  let warnedNoMouse = false;
+  const sendMouse = async (kind: "click" | "wheel-up" | "wheel-down", col: number, row: number, count = 1) => {
+    try {
+      const { sent } = await api<{ sent: boolean }>(`/api/sessions/${name}/mouse`, { kind, col, row, count });
+      if (!sent && !warnedNoMouse) {
+        warnedNoMouse = true;
+        toast("This screen doesn't take taps. Use the keys below.");
+      }
+    } catch (err) {
+      toast((err as Error).message);
+    }
+  };
+  const enableTouch = (terminal: Terminal) => {
+    const surface = terminal.element!;
+    const cell = (x: number, y: number) => {
+      const box = surface.querySelector(".xterm-screen")!.getBoundingClientRect();
+      return {
+        col: Math.floor(((x - box.left) / box.width) * terminal.cols) + 1,
+        row: Math.floor(((y - box.top) / box.height) * terminal.rows) + 1,
+        height: box.height / terminal.rows,
+      };
+    };
+    let start: { x: number; y: number; lastY: number; moved: boolean; pending: number } | undefined;
+    surface.addEventListener("pointerdown", (event) => {
+      start = { x: event.clientX, y: event.clientY, lastY: event.clientY, moved: false, pending: 0 };
+    });
+    surface.addEventListener("pointermove", (event) => {
+      if (!start) return;
+      if (Math.abs(event.clientY - start.y) > 8 || Math.abs(event.clientX - start.x) > 8) start.moved = true;
+      const { col, row, height } = cell(event.clientX, event.clientY);
+      start.pending += start.lastY - event.clientY;
+      start.lastY = event.clientY;
+      const steps = Math.trunc(start.pending / height);
+      if (steps) {
+        start.pending -= steps * height;
+        // Finger moving up pulls the content up, i.e. scrolls down.
+        void sendMouse(steps > 0 ? "wheel-down" : "wheel-up", col, row, Math.abs(steps));
+      }
+    });
+    surface.addEventListener("pointerup", (event) => {
+      if (start && !start.moved) {
+        const { col, row } = cell(event.clientX, event.clientY);
+        const ripple = h("span", { class: "tap-ripple" });
+        ripple.style.left = `${event.clientX}px`;
+        ripple.style.top = `${event.clientY}px`;
+        document.body.append(ripple);
+        setTimeout(() => ripple.remove(), 400);
+        void sendMouse("click", col, row);
+      }
+      start = undefined;
+    });
+    surface.addEventListener("pointercancel", () => (start = undefined));
+  };
+
   const zoom = (delta: number) => {
     fontSize = Math.min(16, Math.max(5, fontSize + delta));
     localStorage.setItem("pocket-term-font", String(fontSize));

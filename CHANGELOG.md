@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Tap and swipe in the Terminal tab.** A tap is a click and a vertical swipe scrolls, so menus like `/status` (tabs) and `/config` (long lists) work by touch. It only applies when the program on screen accepts mouse input; a plain shell never gets stray text. ← and → join the quick keys.
+
 ## 1.0.0 — 2026-10-12
 
 First release.

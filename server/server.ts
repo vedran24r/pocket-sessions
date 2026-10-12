@@ -612,6 +612,13 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { cwd, ...(await changedFiles(cwd)) });
       }
       if (action === "upload" && req.method === "POST") return json(res, 200, { path: await saveUpload(req, session) });
+      if (action === "mouse" && req.method === "POST") {
+        const { kind, col, row, count = 1 } = await readJson(req);
+        if (!["click", "wheel-up", "wheel-down"].includes(kind) || !Number.isFinite(col) || !Number.isFinite(row)) return json(res, 400, { error: "bad mouse event" });
+        let sent = false;
+        for (let i = 0; i < Math.min(Math.max(1, Number(count) || 1), 20); i++) sent = await tmux.sendMouse(session, kind, col, row);
+        return json(res, 200, { sent });
+      }
       if (action === "key" && req.method === "POST") {
         const { key } = await readJson(req);
         if (!(key in tmux.KEYS)) return json(res, 400, { error: "unknown key" });
