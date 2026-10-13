@@ -69,14 +69,43 @@ export async function captureScreen(session: string): Promise<Screen> {
   return { cols, rows, cursorX, cursorY, data: data.replace(/\n$/, "") };
 }
 
-/** Bracketed paste keeps multi-line dictation as one message instead of submitting at each newline. */
-export async function sendText(session: string, text: string, submit: boolean): Promise<void> {
-  const buffer = `pocket-${process.pid}-${Date.now()}`;
-  await run(["load-buffer", "-b", buffer, "-"], text);
-  await run(["paste-buffer", "-p", "-d", "-b", buffer, "-t", `=${session}:`]);
+// Messages are typed, not pasted: Claude Code marks pasted text (bracketed paste, or a big block
+// arriving at once) as <pasted_content> and treats it as text from elsewhere, not as instructions
+// from the person. Chunks of 200 characters 20 ms apart read as typing; a 4,000-character message
+// takes about half a second.
+const TYPE_CHUNK = 200;
+const TYPE_GAP_MS = 20;
+const sending = new Map<string, Promise<unknown>>();
+
+/** One message at a time per session, so two quick sends can't interleave into one message. */
+export function sendText(session: string, text: string, submit: boolean): Promise<void> {
+  const previous = sending.get(session) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(() => typeText(session, text, submit));
+  sending.set(session, next);
+  void next.finally(() => sending.get(session) === next && sending.delete(session)).catch(() => {});
+  return next;
+}
+
+async function typeText(session: string, text: string, submit: boolean): Promise<void> {
+  const target = `=${session}:`;
+  // Typed characters act as keys: a Tab would trigger completion instead of appearing, and other
+  // control characters (a stray Ctrl-C or Escape in pasted text) would interrupt or cancel.
+  const lines = text
+    .replace(/\r\n?/g, "\n")
+    .replace(/\t/g, "    ")
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+    .split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    // Ctrl-J starts a new line in the agent's input (Claude Code, Codex) without sending.
+    if (index > 0) await run(["send-keys", "-t", target, "C-j"]);
+    for (let at = 0; at < lines[index].length; at += TYPE_CHUNK) {
+      await run(["send-keys", "-t", target, "-l", lines[index].slice(at, at + TYPE_CHUNK)]);
+      await new Promise((resolve) => setTimeout(resolve, TYPE_GAP_MS));
+    }
+  }
   if (!submit) return;
-  // Claude Code debounces pastes and takes longer over pasted file paths; an Enter that arrives
-  // too early is swallowed. Press it, then check the text left the input box, up to three times.
+  // The agent can lag behind fast input (file paths especially), and an Enter that arrives too
+  // early is swallowed. Press it, then check the text left the input box, up to three times.
   const snippet = text.split("\n")[0].trim().slice(0, 24);
   for (let attempt = 0; attempt < 3; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 150 + attempt * 350));
@@ -213,6 +242,38 @@ export async function permissionChoice(session: string, choice: "allow" | "deny"
 export type MouseAction = "click" | "wheel-up" | "wheel-down";
 
 /**
+ * A tap on a menu in a screen that doesn't take mouse input (Claude's "trust this folder?" prompt
+ * comes before its mouse support). Menus mark the selected option with "❯"; the option under the
+ * finger is reached with arrow keys from there, then Enter. Does nothing unless such a menu is
+ * on screen and the tap lands on one of its options.
+ */
+async function tapMenu(session: string, row: number): Promise<boolean> {
+  const lines = (await run(["capture-pane", "-p", "-t", `=${session}:`])).split("\n");
+  const marker = lines.findIndex((line) => /^\s*❯\s+\S/.test(line));
+  if (marker < 0) return false;
+  const prefix = lines[marker].match(/^(\s*❯\s+)/)![1].length;
+  const numbered = /^\d+\.\s/.test(lines[marker].slice(prefix));
+  // An option starts where text begins at the marker's text column (numbered menus: with "N. ").
+  const isOption = (line: string) =>
+    line.length > prefix && /^\s*(❯\s+)?$/.test(line.slice(0, prefix)) && /\S/.test(line[prefix]) && (!numbered || /^\d+\.\s/.test(line.slice(prefix)));
+  // The menu is the run of non-blank lines around the marker.
+  let top = marker;
+  while (top > 0 && lines[top - 1].trim()) top--;
+  let bottom = marker;
+  while (bottom < lines.length - 1 && lines[bottom + 1].trim()) bottom++;
+  const tapped = row - 1;
+  if (tapped < top || tapped > bottom) return false;
+  const options = [];
+  for (let i = top; i <= bottom; i++) if (isOption(lines[i])) options.push(i);
+  const target = options.filter((start) => start <= tapped).at(-1);
+  if (target === undefined) return false;
+  const steps = options.indexOf(target) - options.indexOf(marker);
+  const keys = Array.from({ length: Math.abs(steps) }, () => (steps > 0 ? "Down" : "Up"));
+  await run(["send-keys", "-t", `=${session}:`, ...keys, "Enter"]);
+  return true;
+}
+
+/**
  * Sends a tap or swipe from the phone as a real mouse event (SGR encoding), the way a desktop
  * terminal would. Only when the program on screen has turned mouse reporting on: otherwise the
  * escape sequence would arrive as typed text (in a shell, for instance). Returns whether it was sent.
@@ -220,7 +281,7 @@ export type MouseAction = "click" | "wheel-up" | "wheel-down";
 export async function sendMouse(session: string, action: MouseAction, col: number, row: number): Promise<boolean> {
   const flags = await run(["display-message", "-p", "-t", `=${session}:`, "#{mouse_any_flag}#{mouse_button_flag}#{mouse_standard_flag} #{mouse_sgr_flag} #{pane_width} #{pane_height}"]);
   const [tracking, sgr, width, height] = flags.trim().split(" ");
-  if (!/1/.test(tracking) || sgr !== "1") return false;
+  if (!/1/.test(tracking) || sgr !== "1") return action === "click" ? tapMenu(session, Math.round(row)) : false;
   const x = Math.min(Math.max(1, Math.round(col)), Number(width));
   const y = Math.min(Math.max(1, Math.round(row)), Number(height));
   const esc = "\x1b";
@@ -236,4 +297,8 @@ export function killSession(session: string): Promise<string> {
 
 export function startServerIfNeeded(): void {
   spawn(TMUX, [...BASE, "start-server"], { stdio: "ignore" }).on("error", () => {});
+}
+
+export async function exists(session: string): Promise<boolean> {
+  return run(["has-session", "-t", `=${session}`]).then(() => true, () => false);
 }

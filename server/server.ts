@@ -459,7 +459,10 @@ async function readJson(req: IncomingMessage): Promise<any> {
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+  // Answered before the request body was read (refused early, or too large): the unread rest would
+  // be handed to the next request on a reused connection, so close this one.
+  const unread = !res.req.complete;
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...(unread ? { connection: "close" } : {}) });
   res.end(JSON.stringify(body));
 }
 
@@ -635,6 +638,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (action === "takeover" && req.method === "POST") return json(res, 200, { name: await takeOver(session) });
       if (!tmux.isTmux(session)) return json(res, 409, { error: "This session runs outside pocket, so it's read-only. Restart it with `claude --continue` to type from the phone." });
+      if (req.method === "POST" && action !== "end" && !(await tmux.exists(session))) {
+        return json(res, 410, { error: "This session has ended. Go back to the list to start a new one." });
+      }
       if (action === "screen" && req.method === "GET") {
         const cols = Number(url.searchParams.get("cols"));
         const rows = Number(url.searchParams.get("rows"));
@@ -702,9 +708,6 @@ const server = http.createServer(async (req, res) => {
     }
     json(res, 404, { error: "not found" });
   } catch (err: any) {
-    // Refused mid-upload, part of the body is still unread; a reused connection would hand that to the
-    // next request. Close it so the phone's next request starts on a clean one.
-    if (err.status === 413) res.setHeader("connection", "close");
     if (!res.headersSent) json(res, err.status ?? 500, { error: String(err.message ?? err) });
     else res.end();
   }
