@@ -492,6 +492,16 @@ function renderSession(name: string) {
     settleBottom();
     if (stick) chat.scrollTop = chat.scrollHeight;
   });
+  // Stay on the newest message while you're at the bottom, also when the keyboard opens or an image
+  // finishes loading; scrolling up to read stops that until you're back at the bottom.
+  let pinned = true;
+  chat.addEventListener("scroll", () => (pinned = nearBottom()), { passive: true });
+  const keepPinned = () => {
+    if (pinned) chat.scrollTop = chat.scrollHeight;
+  };
+  new ResizeObserver(keepPinned).observe(chat);
+  new MutationObserver(keepPinned).observe(chat, { childList: true, subtree: true });
+  chat.addEventListener("load", keepPinned, true);
   chatSource.addEventListener("activity", (event) => {
     activity = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
     settleBottom();
@@ -534,7 +544,10 @@ function renderSession(name: string) {
     const charWidth = probe.getBoundingClientRect().width / 40;
     probe.remove();
     const cols = Math.floor((termWrap.clientWidth - 16) / charWidth);
-    const rows = Math.floor((window.innerHeight - termWrap.getBoundingClientRect().top - 150) / Math.ceil(fontSize * 1.2));
+    // Measure the real row height once xterm has drawn; the space is what's left between the tabs and the message box.
+    const screenEl = term?.element?.querySelector(".xterm-screen") as HTMLElement | null;
+    const rowHeight = screenEl && term?.rows ? screenEl.offsetHeight / term.rows : Math.ceil(fontSize * 1.2);
+    const rows = Math.floor((termWrap.clientHeight - zoomRow.offsetHeight - 16) / rowHeight);
     return { cols: Math.max(20, cols), rows: Math.max(10, rows) };
   };
   const openTerminal = async () => {
@@ -546,14 +559,26 @@ function renderSession(name: string) {
       term.open(termInner);
       enableTouch(term);
     }
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     const { cols, rows } = phoneGrid();
     screenSource?.close();
     screenSource = new EventSource(`/api/sessions/${name}/screen?cols=${cols}&rows=${rows}`);
     screenSource.addEventListener("screen", (event) => {
       const screen = JSON.parse((event as MessageEvent).data) as Screen;
       if (term!.cols !== screen.cols || term!.rows !== screen.rows) term!.resize(screen.cols, screen.rows);
-      term!.write(`\x1b[H\x1b[2J${screen.data.replace(/\n/g, "\r\n")}\x1b[${screen.cursorY + 1};${screen.cursorX + 1}H`);
+      term!.write(`\x1b[H\x1b[2J${screen.data.replace(/\n/g, "\r\n")}\x1b[${screen.cursorY + 1};${screen.cursorX + 1}H`, fitToView);
     });
+  };
+  // A screen bigger than the phone (the laptop is attached, so it can't be resized) is scaled down to
+  // fit, so nothing is ever cut off at the bottom or the side. Taps still land right: they're mapped
+  // through the scaled position.
+  const fitToView = () => {
+    const screenEl = term?.element?.querySelector(".xterm-screen") as HTMLElement | null;
+    if (!screenEl) return;
+    const width = termWrap.clientWidth - 12;
+    const height = termWrap.clientHeight - zoomRow.offsetHeight - 12;
+    const scale = Math.min(1, width / screenEl.offsetWidth, height / screenEl.offsetHeight);
+    termInner.style.transform = scale < 1 ? `scale(${scale})` : "";
   };
   const closeTerminal = () => {
     screenSource?.close();
@@ -610,8 +635,8 @@ function renderSession(name: string) {
 
     // One gesture: decided as a tap, a vertical swipe (scrolls the agent's list) or a sideways
     // swipe (left to the browser, which pans a terminal wider than the phone).
-    let gesture: { x: number; y: number; lastY: number; axis?: "x" | "y"; pending: number } | undefined;
-    const begin = (x: number, y: number) => (gesture = { x, y, lastY: y, pending: 0 });
+    let gesture: { x: number; y: number; lastY: number; axis?: "x" | "y"; pending: number; samples: { y: number; at: number }[] } | undefined;
+    const begin = (x: number, y: number) => (gesture = { x, y, lastY: y, pending: 0, samples: [{ y, at: performance.now() }] });
     const move = (x: number, y: number, stopBrowserScroll: () => void) => {
       if (!gesture) return;
       if (!gesture.axis && (Math.abs(x - gesture.x) > 8 || Math.abs(y - gesture.y) > 8)) {
@@ -622,14 +647,38 @@ function renderSession(name: string) {
       const { col, row, height } = cell(x, y);
       gesture.pending += gesture.lastY - y;
       gesture.lastY = y;
+      gesture.samples = [...gesture.samples.filter((sample) => performance.now() - sample.at < 120), { y, at: performance.now() }];
       const steps = Math.trunc(gesture.pending / height);
       if (steps) {
         gesture.pending -= steps * height;
         queueScroll(steps, col, row);
       }
     };
+    // A quick flick keeps scrolling a little after the finger lifts, like any phone list.
+    const fling = (x: number, y: number) => {
+      const samples = gesture?.samples ?? [];
+      if (samples.length < 2) return;
+      const first = samples[0];
+      const last = samples[samples.length - 1];
+      // Only a finger lifted while still moving flicks; a drag that paused before release just stops.
+      if (performance.now() - last.at > 80) return;
+      const velocity = (first.y - last.y) / Math.max(1, last.at - first.at); // px per ms, + = upward
+      if (Math.abs(velocity) < 0.6) return;
+      const { col, row, height } = cell(x, y);
+      let remaining = Math.min(40, Math.round((Math.abs(velocity) * 350) / height));
+      const direction = Math.sign(velocity);
+      const step = () => {
+        if (remaining <= 0) return;
+        const chunk = Math.max(1, Math.ceil(remaining / 3));
+        remaining -= chunk;
+        queueScroll(direction * chunk, col, row);
+        setTimeout(step, 90);
+      };
+      step();
+    };
     const finish = (x: number, y: number) => {
       if (gesture && !gesture.axis) tapAt(x, y);
+      if (gesture?.axis === "y") fling(x, y);
       gesture = undefined;
     };
 
@@ -667,7 +716,8 @@ function renderSession(name: string) {
   const zoomIn = h("button", { class: "zoom", textContent: "A+" });
   zoomOut.onclick = () => zoom(-1);
   zoomIn.onclick = () => zoom(1);
-  termWrap.prepend(h("div", { class: "zoom-row" }, zoomOut, zoomIn));
+  const zoomRow = h("div", { class: "zoom-row" }, zoomOut, zoomIn);
+  termWrap.prepend(zoomRow);
 
   const showTab = (view: boolean | "changes") => {
     const terminal = view === true;
@@ -808,6 +858,13 @@ function route() {
   const match = location.hash.match(/^#\/s\/((?:pk|ro)-[a-z0-9._-]+)$/);
   match ? renderSession(match[1]) : renderHome();
 }
+
+// The app fills exactly what's visible: below the keyboard and above the system bars.
+const viewport = window.visualViewport;
+const syncHeight = () => document.documentElement.style.setProperty("--app-height", `${Math.round(viewport?.height ?? window.innerHeight)}px`);
+viewport?.addEventListener("resize", syncHeight);
+window.addEventListener("resize", syncHeight);
+syncHeight();
 
 window.addEventListener("hashchange", route);
 route();

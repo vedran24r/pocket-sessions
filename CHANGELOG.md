@@ -20,7 +20,8 @@ First release.
 - A message you send shows at once ("sending…"), including one typed while the agent is busy. Pocket makes sure it's actually submitted.
 - While the agent works, the chat shows its live status line (e.g. "✻ Determining… (8s · ↓ 89 tokens)"), with a **Stop** button. Once it stops (finished, Stop, Esc or Ctrl-C), the line goes away within seconds.
 - A message box made for voice dictation, quick keys, and one-tap **quick replies** ("continue", "commit and push"…) that you can edit.
-- **Tap and swipe in the Terminal tab:** a tap is a click and a vertical swipe scrolls, so menus like `/status` and `/config` work by touch. It only applies when the program on screen accepts mouse input.
+- **Tap and swipe in the Terminal tab:** a tap is a click, and a vertical swipe scrolls with phone-like momentum, so menus like `/status` and `/config` work by touch. The screen refreshes right after each touch. It only applies when the program on screen accepts mouse input.
+- The app fits exactly the visible screen, above the keyboard and the system navigation bar. The terminal always fits whole (scaled down if a laptop window keeps it larger), and the chat stays on the newest message.
 - **Images** from the gallery: shrunk on the phone and passed to the agent; they show as pictures in the chat.
 - Tappable links in messages.
 - **＋ New** starts a session in a recent folder, with any Claude profile or Codex. **End** closes a session; **Hide** removes a view-only one.

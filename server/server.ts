@@ -306,6 +306,7 @@ function openEventStream(req: IncomingMessage, res: ServerResponse, intervalMs: 
     }
   };
   void run();
+  // The caller can trigger an extra tick right away (e.g. right after input from the phone).
   const timer = setInterval(run, intervalMs);
   const heartbeat = setInterval(() => res.write(": ping\n\n"), 15_000);
   req.on("close", () => {
@@ -313,6 +314,7 @@ function openEventStream(req: IncomingMessage, res: ServerResponse, intervalMs: 
     clearInterval(heartbeat);
     onClose?.();
   });
+  return run;
 }
 
 /** Other live sessions writing to the same transcript (two terminals resumed one conversation). */
@@ -402,19 +404,38 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
   listeners.add(listener);
 }
 
+// Open Terminal views per session, so input from the phone can refresh them at once instead of on
+// the next poll; that's what makes taps and swipes feel direct.
+const screenPokes = new Map<string, Set<() => void>>();
+function pokeScreen(session: string): void {
+  for (const delay of [40, 160, 400]) setTimeout(() => screenPokes.get(session)?.forEach((poke) => poke()), delay);
+}
+
 function screenStream(req: IncomingMessage, res: ServerResponse, session: string, fit?: { cols: number; rows: number }) {
   let last = "";
   let ticks = 0;
-  openEventStream(req, res, 500, async (send) => {
-    if (fit && ticks++ % 4 === 0) await tmux.fitToPhone(session, fit.cols, fit.rows);
-    const screen = await tmux.captureScreen(session);
-    const key = `${screen.cols}x${screen.rows}:${screen.cursorX},${screen.cursorY}:${screen.data}`;
-    if (key !== last) {
-      last = key;
-      send("screen", screen);
-    }
-  });
+  const pokes = screenPokes.get(session) ?? new Set<() => void>();
+  screenPokes.set(session, pokes);
+  let refresh: () => Promise<void> = async () => {};
+  const poke = () => void refresh();
+  pokes.add(poke);
+  refresh = openEventStream(
+    req,
+    res,
+    250,
+    async (send) => {
+      if (fit && ticks++ % 8 === 0) await tmux.fitToPhone(session, fit.cols, fit.rows);
+      const screen = await tmux.captureScreen(session);
+      const key = `${screen.cols}x${screen.rows}:${screen.cursorX},${screen.cursorY}:${screen.data}`;
+      if (key !== last) {
+        last = key;
+        send("screen", screen);
+      }
+    },
+    () => pokes.delete(poke),
+  );
 }
+
 
 async function readJson(req: IncomingMessage): Promise<any> {
   let size = 0;
@@ -625,6 +646,7 @@ const server = http.createServer(async (req, res) => {
         const key = await tmux.permissionChoice(session, choice === "allow" ? "allow" : "deny");
         if (!key) return json(res, 409, { error: "There's no permission question with a one-time answer on screen. Open the session to answer it" });
         await tmux.sendKey(session, key);
+        pokeScreen(session);
         if (state.sessions[session]?.status === "waiting") setStatus(session, profile, "working");
         return json(res, 200, { ok: true });
       }
@@ -640,13 +662,15 @@ const server = http.createServer(async (req, res) => {
         const { kind, col, row, count = 1 } = await readJson(req);
         if (!["click", "wheel-up", "wheel-down"].includes(kind) || !Number.isFinite(col) || !Number.isFinite(row)) return json(res, 400, { error: "bad mouse event" });
         let sent = false;
-        for (let i = 0; i < Math.min(Math.max(1, Number(count) || 1), 20); i++) sent = await tmux.sendMouse(session, kind, col, row);
+        for (let i = 0; i < Math.min(Math.max(1, Number(count) || 1), 40); i++) sent = await tmux.sendMouse(session, kind, col, row);
+        pokeScreen(session);
         return json(res, 200, { sent });
       }
       if (action === "key" && req.method === "POST") {
         const { key } = await readJson(req);
         if (!(key in tmux.KEYS)) return json(res, 400, { error: "unknown key" });
         await tmux.sendKey(session, key);
+        pokeScreen(session);
         // An interrupt from the phone: confirm it stopped quickly rather than waiting for the watcher.
         if ((key === "esc" || key === "ctrlc") && state.sessions[session]?.status === "working" && agentOf.get(session) === "claude") {
           for (const delay of [1200, 2400, 3600]) setTimeout(() => void checkStillWorking(session), delay);
