@@ -308,7 +308,8 @@ function openEventStream(req: IncomingMessage, res: ServerResponse, intervalMs: 
   void run();
   // The caller can trigger an extra tick right away (e.g. right after input from the phone).
   const timer = setInterval(run, intervalMs);
-  const heartbeat = setInterval(() => res.write(": ping\n\n"), 15_000);
+  // A real event, not a comment, so the phone can tell a live connection from a frozen one.
+  const heartbeat = setInterval(() => res.write("event: ping\ndata: {}\n\n"), 15_000);
   req.on("close", () => {
     clearInterval(timer);
     clearInterval(heartbeat);

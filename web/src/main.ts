@@ -449,7 +449,24 @@ function renderSession(name: string) {
 
   // Chat stream
   const nearBottom = () => chat.scrollHeight - chat.scrollTop - chat.clientHeight < 120;
-  const chatSource = new EventSource(`/api/sessions/${name}/chat`);
+  // Android freezes a backgrounded page's connection without closing it, so the chat would sit on old
+  // data after the phone sleeps. The connection is re-made when the app is back on screen, or when
+  // the server's 15-second heartbeat goes missing; handlers listen on chatEvents, which outlives it.
+  const chatEvents = new EventTarget();
+  let chatSource: EventSource | undefined;
+  let lastHeard = Date.now();
+  const connectChat = () => {
+    chatSource?.close();
+    lastHeard = Date.now();
+    chatSource = new EventSource(`/api/sessions/${name}/chat`);
+    for (const type of ["chat", "activity", "status", "ping"]) {
+      chatSource.addEventListener(type, (event) => {
+        lastHeard = Date.now();
+        chatEvents.dispatchEvent(new MessageEvent(type, { data: (event as MessageEvent).data }));
+      });
+    }
+  };
+  connectChat();
 
   // A sent message shows at once as "sending…" and turns into the real bubble when the agent
   // records it; the working line shows the agent's own status ("✻ Thinking… (12s)") while it runs.
@@ -469,7 +486,7 @@ function renderSession(name: string) {
     stop.hidden = readonly || currentStatus !== "working";
     workingText.textContent = activity || (currentStatus === "working" ? "Working…" : "Sending…");
   };
-  chatSource.addEventListener("chat", (event) => {
+  chatEvents.addEventListener("chat", (event) => {
     const { reset, items } = JSON.parse((event as MessageEvent).data) as { reset?: boolean; items: Item[] };
     const stick = reset || nearBottom();
     if (reset) chat.replaceChildren();
@@ -492,11 +509,11 @@ function renderSession(name: string) {
   new ResizeObserver(keepPinned).observe(chat);
   new MutationObserver(keepPinned).observe(chat, { childList: true, subtree: true });
   chat.addEventListener("load", keepPinned, true);
-  chatSource.addEventListener("activity", (event) => {
+  chatEvents.addEventListener("activity", (event) => {
     activity = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
     settleBottom();
   });
-  chatSource.addEventListener("status", (event) => {
+  chatEvents.addEventListener("status", (event) => {
     const { status, note, title: liveTitle, agent, hasChat, sharedWith } = JSON.parse((event as MessageEvent).data) as { status: Status; note?: string; title?: string; agent?: string; hasChat?: boolean; sharedWith?: string[] };
     if (liveTitle) titleEl.textContent = liveTitle;
     rename.hidden = readonly || (agent ?? "claude") !== "claude";
@@ -859,8 +876,20 @@ function renderSession(name: string) {
   renderReplies();
   grow();
 
+  const watchdog = window.setInterval(() => {
+    if (document.visibilityState === "visible" && Date.now() - lastHeard > 40_000) connectChat();
+  }, 10_000);
+  const onReturn = () => {
+    if (document.visibilityState !== "visible") return;
+    connectChat();
+    if (screenSource) void openTerminal();
+  };
+  document.addEventListener("visibilitychange", onReturn);
+
   cleanup = () => {
-    chatSource.close();
+    clearInterval(watchdog);
+    document.removeEventListener("visibilitychange", onReturn);
+    chatSource?.close();
     closeTerminal();
     term?.dispose();
   };

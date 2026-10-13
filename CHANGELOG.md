@@ -24,6 +24,7 @@ First release.
 - The app fits exactly the visible screen, above the keyboard and the system navigation bar. The terminal always fits whole (scaled down if a laptop window keeps it larger), and the chat stays on the newest message.
 - **Images** from the gallery: shrunk on the phone and passed to the agent; they show as pictures in the chat.
 - Tappable links in messages.
+- Stays current after the phone sleeps or you switch apps: the live connection is re-made when the app is back on screen, or when the server's heartbeat goes missing.
 - **＋ New** starts a session in a recent folder, with any Claude profile or Codex. **End** closes a session; **Hide** removes a view-only one.
 - While you view the Terminal tab, the session takes the phone's size (unless you're using the laptop window right now) and reflows to it. It gives the laptop window its size back when you leave. **Pinch** zooms the terminal text, as do A− / A+. Tab titles follow the agent's own title.
 
