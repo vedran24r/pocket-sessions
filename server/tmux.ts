@@ -13,6 +13,8 @@ const SEP = "|:|";
 /** pk-* live in the pocket tmux server; ro-* are sessions running elsewhere, known only from hooks. */
 export const SESSION_RE = /^(pk|ro)-[a-z0-9._-]+$/;
 export const isTmux = (session: string) => session.startsWith("pk-");
+// Always target a session as `=name:`. Without the colon, tmux reads a dot in the name
+// (an old `pk-claude-vedran.ristic`) as session.pane, and the session can't be found.
 
 function run(args: string[], stdin?: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -150,7 +152,7 @@ export async function sendKey(session: string, key: string): Promise<void> {
 /** Seconds since someone last typed into this session from the laptop. */
 export async function secondsSinceLaptopInput(session: string): Promise<number> {
   try {
-    const out = await run(["list-clients", "-t", `=${session}`, "-F", "#{client_activity}"]);
+    const out = await run(["list-clients", "-t", `=${session}:`, "-F", "#{client_activity}"]);
     const latest = Math.max(0, ...out.split("\n").filter(Boolean).map(Number));
     return latest ? Date.now() / 1000 - latest : Infinity;
   } catch {
@@ -161,7 +163,7 @@ export async function secondsSinceLaptopInput(session: string): Promise<number> 
 export async function uniqueName(base: string): Promise<string> {
   for (let n = 1; ; n++) {
     const name = n === 1 ? base : `${base}-${n}`;
-    const exists = await run(["has-session", "-t", `=${name}`]).then(() => true, () => false);
+    const exists = await run(["has-session", "-t", `=${name}:`]).then(() => true, () => false);
     if (!exists) return name;
   }
 }
@@ -180,7 +182,7 @@ const LAPTOP_IN_USE_SECONDS = 120;
  * away, the laptop window just stayed open). Returns whether the phone now sets the size.
  */
 export async function fitToPhone(session: string, cols: number, rows: number): Promise<boolean> {
-  const activity = await run(["list-clients", "-t", `=${session}`, "-F", "#{client_activity}"]).catch(() => "");
+  const activity = await run(["list-clients", "-t", `=${session}:`, "-F", "#{client_activity}"]).catch(() => "");
   const lastInput = Math.max(0, ...activity.split("\n").filter(Boolean).map(Number));
   if (lastInput && Date.now() / 1000 - lastInput < LAPTOP_IN_USE_SECONDS) {
     await releasePhoneSize(session); // you're back at the laptop: it gets its own size
@@ -292,7 +294,7 @@ export async function sendMouse(session: string, action: MouseAction, col: numbe
 }
 
 export function killSession(session: string): Promise<string> {
-  return run(["kill-session", "-t", `=${session}`]);
+  return run(["kill-session", "-t", `=${session}:`]);
 }
 
 export function startServerIfNeeded(): void {
@@ -300,5 +302,5 @@ export function startServerIfNeeded(): void {
 }
 
 export async function exists(session: string): Promise<boolean> {
-  return run(["has-session", "-t", `=${session}`]).then(() => true, () => false);
+  return run(["has-session", "-t", `=${session}:`]).then(() => true, () => false);
 }

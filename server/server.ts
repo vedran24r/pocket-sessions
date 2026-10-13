@@ -182,7 +182,7 @@ async function takeOver(session: string): Promise<string> {
   if (info?.movedTo) return info.movedTo;
   if (!info?.sessionId || !info.cwd) throw Object.assign(new Error("Not enough known about this session yet — wait for its next message."), { status: 409 });
   const profile = profileOf(session);
-  const slug = path.basename(info.cwd).toLowerCase().replace(/[^a-z0-9._]+/g, "-").replace(/^-|-$/g, "") || "session";
+  const slug = path.basename(info.cwd).toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-|-$/g, "") || "session";
   const name = await tmux.uniqueName(`pk-${profile}-${slug}`);
   const shell = process.env.SHELL || "/bin/zsh";
   const agent = info.agent ?? "claude";
@@ -237,7 +237,7 @@ async function startSession(body: any): Promise<string> {
   const profiles = state.profiles ?? { claude: "" };
   const profile = agent === "codex" ? "codex" : String(body.profile ?? "claude");
   if (agent === "claude" && !(profile in profiles)) throw Object.assign(new Error(`Unknown profile ${profile}`), { status: 400 });
-  const slug = path.basename(cwd).toLowerCase().replace(/[^a-z0-9._]+/g, "-").replace(/^-|-$/g, "") || "session";
+  const slug = path.basename(cwd).toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-|-$/g, "") || "session";
   const name = await tmux.uniqueName(`pk-${profile.replace(/[^a-z0-9]/g, "")}-${slug}`);
   const env: Record<string, string> = {};
   if (agent === "claude" && profiles[profile]) env.CLAUDE_CONFIG_DIR = profiles[profile];

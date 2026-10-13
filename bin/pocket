@@ -15,7 +15,7 @@ POCKET_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 T=(tmux -L "${POCKET_TMUX_SOCKET:-pocket}" -f "$POCKET_DIR/tmux.conf")
 CLAUDE_BIN="${POCKET_CLAUDE_BIN:-claude}"
 
-slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._' '-' | sed -e 's/--*/-/g' -e 's/^-//' -e 's/-$//'; }
+slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_' '-' | sed -e 's/--*/-/g' -e 's/^-//' -e 's/-$//'; }
 
 profile() {
   if [[ -n "${POCKET_PROFILE:-}" ]]; then printf '%s' "$POCKET_PROFILE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'
@@ -28,7 +28,7 @@ profile() {
 # attaches, unless the session is marked @pocket_keep.
 attach() {
   if [[ "${POCKET_KEEP_ON_CLOSE:-0}" == 1 ]]; then "${T[@]}" set-option -t "=$1:" @pocket_keep 1; fi
-  if [[ -n "${TMUX:-}" ]]; then "${T[@]}" switch-client -t "=$1"; else exec "${T[@]}" attach-session -t "=$1"; fi
+  if [[ -n "${TMUX:-}" ]]; then "${T[@]}" switch-client -t "=$1:"; else exec "${T[@]}" attach-session -t "=$1:"; fi
 }
 
 cmd_run() {
@@ -54,7 +54,7 @@ cmd_run() {
   local base session n=1
   base="pk-$label-$(slug "$(basename "$PWD")")"
   session="$base"
-  while "${T[@]}" has-session -t "=$session" 2>/dev/null; do n=$((n + 1)); session="$base-$n"; done
+  while "${T[@]}" has-session -t "=$session:" 2>/dev/null; do n=$((n + 1)); session="$base-$n"; done
 
   # The tmux server doesn't share this shell's environment, so hand it over explicitly
   # (PATH, CLAUDE_CONFIG_DIR, AWS_PROFILE, nvm, ...).
