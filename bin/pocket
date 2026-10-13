@@ -12,7 +12,7 @@
 set -euo pipefail
 
 POCKET_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
-T=(tmux -L pocket -f "$POCKET_DIR/tmux.conf")
+T=(tmux -L "${POCKET_TMUX_SOCKET:-pocket}" -f "$POCKET_DIR/tmux.conf")
 CLAUDE_BIN="${POCKET_CLAUDE_BIN:-claude}"
 
 slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._' '-' | sed -e 's/--*/-/g' -e 's/^-//' -e 's/-$//'; }

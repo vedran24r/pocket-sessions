@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const CONF = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "tmux.conf");
 const TMUX = process.env.TMUX_BIN ?? "tmux";
-const BASE = ["-L", "pocket", "-f", CONF];
+// POCKET_TMUX_SOCKET runs a separate, isolated tmux server (tests, a second install).
+const BASE = ["-L", process.env.POCKET_TMUX_SOCKET || "pocket", "-f", CONF];
 
 // tmux rewrites tabs in format output when the locale isn't UTF-8, so use a printable separator.
 const SEP = "|:|";

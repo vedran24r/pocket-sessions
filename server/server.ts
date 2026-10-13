@@ -450,7 +450,12 @@ async function readJson(req: IncomingMessage): Promise<any> {
     if (size > 1_000_000) throw Object.assign(new Error("body too large"), { status: 413 });
     chunks.push(chunk);
   }
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+  if (!chunks.length) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw Object.assign(new Error("The request body isn't valid JSON"), { status: 400 });
+  }
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -697,6 +702,9 @@ const server = http.createServer(async (req, res) => {
     }
     json(res, 404, { error: "not found" });
   } catch (err: any) {
+    // Refused mid-upload, part of the body is still unread; a reused connection would hand that to the
+    // next request. Close it so the phone's next request starts on a clean one.
+    if (err.status === 413) res.setHeader("connection", "close");
     if (!res.headersSent) json(res, err.status ?? 500, { error: String(err.message ?? err) });
     else res.end();
   }
