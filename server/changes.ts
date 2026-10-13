@@ -28,13 +28,31 @@ export interface ChangedFile {
   removed: number;
 }
 
-export async function changedFiles(cwd: string): Promise<{ repo: boolean; root?: string; branch?: string; files: ChangedFile[] }> {
+/**
+ * What to compare against. On a feature branch: the point it split off the repository's main
+ * branch, so work already committed on the branch still shows. On the main branch (or with no
+ * remote): HEAD, i.e. uncommitted changes only.
+ */
+async function baseOf(root: string): Promise<{ ref: string; label?: string }> {
+  const main = (await git(root, ["rev-parse", "--abbrev-ref", "origin/HEAD"]).catch(() => "")).trim();
+  if (!main) return { ref: "HEAD" };
+  const [forkPoint, head] = await Promise.all([
+    git(root, ["merge-base", "HEAD", main]).catch(() => ""),
+    git(root, ["rev-parse", "HEAD"]).catch(() => ""),
+  ]);
+  if (!forkPoint.trim() || forkPoint.trim() === head.trim()) return { ref: "HEAD" };
+  return { ref: forkPoint.trim(), label: main };
+}
+
+export async function changedFiles(cwd: string): Promise<{ repo: boolean; root?: string; branch?: string; since?: string; files: ChangedFile[] }> {
   const rootDir = (await git(cwd, ["rev-parse", "--show-toplevel"]).catch(() => "")).trim();
   if (!rootDir) return { repo: false, files: [] };
-  const [status, numstat, branch] = await Promise.all([
-    git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
-    git(cwd, ["diff", "--numstat", "-z", "HEAD"]).catch(() => ""),
-    git(cwd, ["branch", "--show-current"]).catch(() => ""),
+  const base = await baseOf(rootDir);
+  const [nameStatus, numstat, untracked, branch] = await Promise.all([
+    git(rootDir, ["diff", "--name-status", "-z", base.ref]).catch(() => ""),
+    git(rootDir, ["diff", "--numstat", "-z", base.ref]).catch(() => ""),
+    git(rootDir, ["ls-files", "--others", "--exclude-standard", "-z"]).catch(() => ""),
+    git(rootDir, ["branch", "--show-current"]).catch(() => ""),
   ]);
   const counts = new Map<string, { added: number; removed: number }>();
   // -z numstat: "added\tremoved\tpath\0" (renames add two more NUL-separated paths; rare here).
@@ -43,17 +61,18 @@ export async function changedFiles(cwd: string): Promise<{ repo: boolean; root?:
     if (file) counts.set(file, { added: Number(added) || 0, removed: Number(removed) || 0 });
   }
   const files: ChangedFile[] = [];
-  const records = status.split("\0");
-  for (let i = 0; i < records.length; i++) {
-    const record = records[i];
-    if (record.length < 4) continue;
-    const code = record.slice(0, 2);
-    const file = record.slice(3);
-    if (code[0] === "R" || code[0] === "C") i++; // the next record is the old name
-    const count = counts.get(file) ?? (code === "??" ? { added: await lineCount(path.join(rootDir, file)), removed: 0 } : { added: 0, removed: 0 });
-    files.push({ path: file, status: code.trim() || code, ...count });
+  // -z name-status: "M\0path\0", renames "R100\0old\0new\0".
+  const records = nameStatus.split("\0");
+  for (let i = 0; i < records.length - 1; i++) {
+    const code = records[i];
+    if (!/^[A-Z]/.test(code)) continue;
+    const file = code[0] === "R" || code[0] === "C" ? records[(i += 2)] : records[++i];
+    files.push({ path: file, status: code[0], ...(counts.get(file) ?? { added: 0, removed: 0 }) });
   }
-  return { repo: true, root: rootDir, branch: branch.trim() || undefined, files };
+  for (const file of untracked.split("\0").filter(Boolean)) {
+    files.push({ path: file, status: "??", added: await lineCount(path.join(rootDir, file)), removed: 0 });
+  }
+  return { repo: true, root: rootDir, branch: branch.trim() || undefined, since: base.label, files };
 }
 
 const MAX_DIFF = 300 * 1024;
@@ -67,6 +86,27 @@ export async function fileDiff(cwd: string, file: string): Promise<string> {
   const diff =
     entry.status === "??"
       ? await git(root, ["diff", "--no-index", "--", "/dev/null", file], [0, 1])
-      : await git(root, ["diff", "HEAD", "--", file]);
+      : await git(root, ["diff", (await baseOf(root)).ref, "--", file]);
   return diff.length > MAX_DIFF ? `${diff.slice(0, MAX_DIFF)}\n… (diff cut off at 300 KB)` : diff;
+}
+
+/** The repository containing a path (a file or a folder that may no longer exist), if any. */
+export async function repoRoot(target: string): Promise<string | undefined> {
+  let dir = target;
+  for (let depth = 0; depth < 4 && dir !== path.dirname(dir); depth++, dir = path.dirname(dir)) {
+    const root = (await git(dir, ["rev-parse", "--show-toplevel"]).catch(() => "")).trim();
+    if (root) return root;
+  }
+  return undefined;
+}
+
+/** The session folder's repository first, then every other repository the session edited files in. */
+export async function sessionRepos(cwd: string, edited: string[]): Promise<string[]> {
+  const roots: string[] = [];
+  for (const target of [cwd, ...edited]) {
+    const root = await repoRoot(target);
+    if (root && !roots.includes(root)) roots.push(root);
+    if (roots.length >= 8) break;
+  }
+  return roots;
 }

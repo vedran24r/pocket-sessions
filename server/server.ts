@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 import { notify, publicKey, subscribe } from "./push.ts";
 import { hookToken, save, state, type SessionInfo, type Status } from "./store.ts";
 import { acceptAccessLink, allowed } from "./access.ts";
-import { changedFiles, fileDiff } from "./changes.ts";
+import { changedFiles, fileDiff, sessionRepos } from "./changes.ts";
 import * as codex from "./codex.ts";
 import * as tmux from "./tmux.ts";
 import { pruneUploads, saveUpload, uploadPath, UPLOADS } from "./uploads.ts";
-import { BranchView, lastAssistantText, TranscriptTail, transcriptTitles } from "./transcript.ts";
+import { BranchView, editedFiles, lastAssistantText, TranscriptTail, transcriptTitles } from "./transcript.ts";
 
 const PORT = Number(process.env.POCKET_PORT ?? 8787);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
@@ -432,7 +432,11 @@ function screenStream(req: IncomingMessage, res: ServerResponse, session: string
         send("screen", screen);
       }
     },
-    () => pokes.delete(poke),
+    () => {
+      pokes.delete(poke);
+      // The last phone view of this session closed: the laptop window gets its own size back.
+      if (!pokes.size) void tmux.releasePhoneSize(session);
+    },
   );
 }
 
@@ -653,9 +657,18 @@ const server = http.createServer(async (req, res) => {
       if (action === "changes" && req.method === "GET") {
         const cwd = sessionCwd(session, await tmux.listSessions());
         if (!cwd) return json(res, 404, { error: "Unknown folder for this session" });
+        const transcript = state.sessions[session]?.transcript;
+        const edited = transcript ? await editedFiles(transcript, cwd) : [];
+        const roots = await sessionRepos(cwd, edited);
         const file = url.searchParams.get("file");
-        if (file) return json(res, 200, { diff: await fileDiff(cwd, file) });
-        return json(res, 200, { cwd, ...(await changedFiles(cwd)) });
+        if (file) {
+          // Diffs only for repositories this session is linked to; fileDiff then refuses unchanged paths.
+          const repo = url.searchParams.get("repo") ?? roots[0];
+          if (!repo || !roots.includes(repo)) return json(res, 404, { error: "Unknown repository for this session" });
+          return json(res, 200, { diff: await fileDiff(repo, file) });
+        }
+        const repos = await Promise.all(roots.map(async (root) => ({ root, name: path.basename(root), ...(await changedFiles(root)) })));
+        return json(res, 200, { cwd, repos });
       }
       if (action === "upload" && req.method === "POST") return json(res, 200, { path: await saveUpload(req, session) });
       if (action === "mouse" && req.method === "POST") {

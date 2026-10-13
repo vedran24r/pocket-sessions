@@ -141,15 +141,28 @@ export async function newSession(name: string, cwd: string, env: Record<string, 
   await run(["new-session", "-d", "-s", name, "-c", cwd, "-x", "100", "-y", "40", ...envArgs, ...command, ";", "set-option", "-t", `=${name}:`, "@pocket_agent", agent]);
 }
 
+// A laptop window counts as in use if someone typed into it this recently.
+const LAPTOP_IN_USE_SECONDS = 120;
+
 /**
- * While no terminal is attached, size the window to the phone so TUIs reflow instead of
- * rendering 120 columns at an unreadable font size. tmux.conf hands the size back to the
- * terminal as soon as one attaches.
+ * Sizes the window to the phone so the agent reflows for it, instead of a 180-column screen shrunk
+ * to unreadable. Happens when no terminal is attached, or the attached ones have been idle (you're
+ * away, the laptop window just stayed open). Returns whether the phone now sets the size.
  */
-export async function fitToPhone(session: string, cols: number, rows: number): Promise<void> {
-  const clients = await run(["list-clients", "-t", `=${session}`, "-F", "x"]).catch(() => "");
-  if (clients.trim()) return;
+export async function fitToPhone(session: string, cols: number, rows: number): Promise<boolean> {
+  const activity = await run(["list-clients", "-t", `=${session}`, "-F", "#{client_activity}"]).catch(() => "");
+  const lastInput = Math.max(0, ...activity.split("\n").filter(Boolean).map(Number));
+  if (lastInput && Date.now() / 1000 - lastInput < LAPTOP_IN_USE_SECONDS) {
+    await releasePhoneSize(session); // you're back at the laptop: it gets its own size
+    return false;
+  }
   await run(["resize-window", "-t", `=${session}:`, "-x", String(cols), "-y", String(rows)]);
+  return true;
+}
+
+/** Hands the size back to the attached terminal (resize-window pinned it to the phone). */
+export async function releasePhoneSize(session: string): Promise<void> {
+  await run(["set-option", "-wu", "-t", `=${session}:`, "window-size"]).catch(() => {});
 }
 
 /** Replaces the conversation name in the pane title, keeping any leading status icons ("⚪ 🧩 old" → "⚪ 🧩 new"). */

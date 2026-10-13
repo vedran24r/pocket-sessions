@@ -421,29 +421,19 @@ function renderSession(name: string) {
       return chip;
     }), edit);
   };
-  const keys = h(
-    "div",
-    { class: "keys" },
-    ...[
-      ["esc", "Esc"],
-      ["y", "y"],
-      ["n", "n"],
-      ["1", "1"],
-      ["2", "2"],
-      ["3", "3"],
-      ["enter", "⏎"],
-      ["up", "↑"],
-      ["down", "↓"],
-      ["left", "←"],
-      ["right", "→"],
-      ["stab", "⇧Tab"],
-      ["ctrlc", "^C"],
-    ].map(([key, label]) => {
-      const button = h("button", { textContent: label });
-      button.onclick = () => api(`/api/sessions/${name}/key`, { key }).catch((err) => toast(err.message));
-      return button;
-    }),
-  );
+  // Menus are answered by tapping them in the Terminal tab, so the bar only holds what can't be
+  // tapped. "⋯" shows the rest for programs that don't take taps.
+  const keyButton = ([key, label]: string[]) => {
+    const button = h("button", { textContent: label });
+    button.onclick = () => api(`/api/sessions/${name}/key`, { key }).catch((err) => toast(err.message));
+    return button;
+  };
+  const moreKeys = h("span", { class: "more-keys", hidden: true },
+    ...[["up", "↑"], ["down", "↓"], ["left", "←"], ["right", "→"], ["tab", "Tab"], ["1", "1"], ["2", "2"], ["3", "3"]].map(keyButton));
+  const moreToggle = h("button", { textContent: "⋯", ariaLabel: "More keys" });
+  moreToggle.onclick = () => (moreKeys.hidden = !moreKeys.hidden);
+  const keys = h("div", { class: "keys" },
+    ...[["esc", "Esc"], ["enter", "⏎"], ["stab", "⇧Tab"], ["ctrlc", "^C"]].map(keyButton), moreToggle, moreKeys);
 
   app.replaceChildren(
     h("header", { class: "bar" }, back, titleEl, statusEl, rename, end),
@@ -683,15 +673,33 @@ function renderSession(name: string) {
     };
 
     // Phones: touch events, so a vertical swipe can be kept from scrolling the page instead.
+    // Two fingers pinch the terminal's text size (not the whole page); the session reflows to it.
+    let pinch: { distance: number; size: number } | undefined;
+    const spread = (touches: TouchList) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
     surface.addEventListener("touchstart", (event) => {
       gesture = undefined;
-      if (event.touches.length === 1) begin(event.touches[0].clientX, event.touches[0].clientY);
+      if (event.touches.length === 2) pinch = { distance: spread(event.touches), size: fontSize };
+      else if (event.touches.length === 1) begin(event.touches[0].clientX, event.touches[0].clientY);
     }, { passive: true });
     surface.addEventListener("touchmove", (event) => {
+      if (pinch && event.touches.length === 2) {
+        event.preventDefault();
+        const size = Math.round(Math.min(16, Math.max(5, pinch.size * (spread(event.touches) / pinch.distance))));
+        if (term && term.options.fontSize !== size) term.options.fontSize = size; // live preview
+        return;
+      }
       const touch = event.touches[0];
       if (touch) move(touch.clientX, touch.clientY, () => event.preventDefault());
     }, { passive: false });
     surface.addEventListener("touchend", (event) => {
+      if (pinch) {
+        if (event.touches.length === 0) {
+          const size = term?.options.fontSize ?? fontSize;
+          pinch = undefined;
+          zoom(size - fontSize);
+        }
+        return;
+      }
       const touch = event.changedTouches[0];
       if (touch && gesture) {
         finish(touch.clientX, touch.clientY);
@@ -708,7 +716,9 @@ function renderSession(name: string) {
 
   const zoom = (delta: number) => {
     fontSize = Math.min(16, Math.max(5, fontSize + delta));
-    localStorage.setItem("pocket-term-font", String(fontSize));
+    try {
+      localStorage.setItem("pocket-term-font", String(fontSize));
+    } catch {}
     if (term) term.options.fontSize = fontSize;
     if (screenSource) void openTerminal(); // refit the session to the new font size
   };
@@ -735,40 +745,47 @@ function renderSession(name: string) {
   termTab.onclick = () => showTab(true);
   changesTab.onclick = () => showTab("changes");
 
-  // Read-only "what did it change" view: git's changed files in the session folder, tap one for its diff.
+  // Read-only "what did it change" view, per repository the session worked in (its own folder, plus
+  // worktrees or other repos it edited files in). Tap a file for its diff.
   interface ChangedFile { path: string; status: string; added: number; removed: number }
+  interface Repo { root: string; name: string; branch?: string; since?: string; files: ChangedFile[] }
   const STATUS_NAMES: Record<string, string> = { "??": "new", A: "added", M: "modified", D: "deleted", R: "renamed" };
   const loadChanges = async () => {
     changesWrap.replaceChildren(h("p", { class: "muted pad" }, "Loading…"));
     try {
-      const result = await api<{ repo: boolean; branch?: string; cwd: string; files: ChangedFile[] }>(`/api/sessions/${name}/changes`);
-      if (!result.repo) return changesWrap.replaceChildren(h("p", { class: "muted pad" }, "This folder isn't a git repository, so there's nothing to compare against."));
-      const totals = result.files.reduce((sum, file) => ({ added: sum.added + file.added, removed: sum.removed + file.removed }), { added: 0, removed: 0 });
+      const { repos } = await api<{ repos: Repo[] }>(`/api/sessions/${name}/changes`);
       const refresh = h("button", { class: "ghost", textContent: "↻ Refresh" });
       refresh.onclick = () => void loadChanges();
-      const header = h("div", { class: "changes-head" },
-        h("span", {}, `${result.files.length} file${result.files.length === 1 ? "" : "s"} changed${result.branch ? ` on ${result.branch}` : ""}`),
-        h("span", { class: "plus" }, `+${totals.added}`), h("span", { class: "minus" }, `−${totals.removed}`), refresh);
-      if (!result.files.length) return changesWrap.replaceChildren(header, h("p", { class: "muted pad" }, "No uncommitted changes."));
-      const rows = result.files.map((file) => {
-        const row = h("button", { class: "change-row" },
-          h("span", { class: `change-status s-${file.status === "??" ? "new" : file.status[0]}` }, STATUS_NAMES[file.status] ?? STATUS_NAMES[file.status[0]] ?? file.status),
-          h("span", { class: "change-path" }, file.path),
-          h("span", { class: "plus" }, file.added ? `+${file.added}` : ""), h("span", { class: "minus" }, file.removed ? `−${file.removed}` : ""));
-        row.onclick = () => void showDiff(file.path);
-        return row;
+      if (!repos.length) return changesWrap.replaceChildren(h("div", { class: "changes-head" }, refresh), h("p", { class: "muted pad" }, "This session hasn't worked in a git repository, so there's nothing to compare against."));
+      const withChanges = repos.filter((repo) => repo.files.length);
+      const sections = (withChanges.length ? withChanges : repos.slice(0, 1)).map((repo) => {
+        const totals = repo.files.reduce((sum, file) => ({ added: sum.added + file.added, removed: sum.removed + file.removed }), { added: 0, removed: 0 });
+        const scope = repo.since ? `since it branched off ${repo.since.replace(/^origin\//, "")}` : "not committed yet";
+        const head = h("div", { class: "repo-head" },
+          h("span", { class: "repo-name" }, repo.name),
+          h("span", { class: "muted" }, `${repo.branch ?? "detached"} · ${repo.files.length} file${repo.files.length === 1 ? "" : "s"} ${scope}`),
+          h("span", { class: "plus" }, `+${totals.added}`), h("span", { class: "minus" }, `−${totals.removed}`));
+        const rows = repo.files.map((file) => {
+          const row = h("button", { class: "change-row" },
+            h("span", { class: `change-status s-${file.status === "??" ? "new" : file.status[0]}` }, STATUS_NAMES[file.status] ?? STATUS_NAMES[file.status[0]] ?? file.status),
+            h("span", { class: "change-path" }, file.path),
+            h("span", { class: "plus" }, file.added ? `+${file.added}` : ""), h("span", { class: "minus" }, file.removed ? `−${file.removed}` : ""));
+          row.onclick = () => void showDiff(repo.root, file.path);
+          return row;
+        });
+        return h("section", { class: "repo" }, head, ...(rows.length ? rows : [h("p", { class: "muted pad" }, "No changes.")]));
       });
-      changesWrap.replaceChildren(header, ...rows);
+      changesWrap.replaceChildren(h("div", { class: "changes-head" }, h("span", {}, withChanges.length ? "What this session changed" : "No changes yet"), refresh), ...sections);
     } catch (err) {
       changesWrap.replaceChildren(h("p", { class: "muted pad" }, (err as Error).message));
     }
   };
-  const showDiff = async (file: string) => {
+  const showDiff = async (repo: string, file: string) => {
     const back = h("button", { class: "ghost", textContent: "‹ All changes" });
     back.onclick = () => void loadChanges();
     changesWrap.replaceChildren(h("div", { class: "changes-head" }, back, h("span", { class: "change-path" }, file)), h("p", { class: "muted pad" }, "Loading…"));
     try {
-      const { diff } = await api<{ diff: string }>(`/api/sessions/${name}/changes?file=${encodeURIComponent(file)}`);
+      const { diff } = await api<{ diff: string }>(`/api/sessions/${name}/changes?repo=${encodeURIComponent(repo)}&file=${encodeURIComponent(file)}`);
       const pre = h("pre", { class: "diff" });
       for (const line of diff.split("\n")) {
         const kind = line.startsWith("@@") ? "hunk" : line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : "";

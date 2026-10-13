@@ -78,7 +78,7 @@ pre { background: #0d0c0a; padding: 8px 10px; border-radius: 8px; overflow-x: au
 .term { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; padding: 6px; display: flex; flex-direction: column; }
 .term-inner { width: max-content; transform-origin: top left; }
 /* Vertical swipes are sent to the agent as scroll steps; the browser keeps sideways panning. */
-.term-inner .xterm, .term-inner .xterm * { touch-action: pan-x; }
+.term-inner .xterm, .term-inner .xterm * { touch-action: none; } /* every gesture here is handled by Pocket */
 .zoom-row { display: flex; gap: 6px; justify-content: flex-end; padding-bottom: 6px; position: sticky; left: 0; }
 .zoom { padding: 2px 10px; font-size: 13px; }
 
@@ -157,3 +157,8 @@ textarea:focus { border-color: var(--accent); }
 .msg a { color: #8fb7ff; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .tap-ripple { position: fixed; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 45%, transparent); pointer-events: none; z-index: 30; animation: tap 0.4s ease-out forwards; }
 @keyframes tap { from { transform: scale(0.4); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
+.more-keys { display: contents; }
+.more-keys[hidden] { display: none; }
+.repo { margin-bottom: 14px; }
+.repo-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 2px 2px 8px; font-size: 13px; }
+.repo-name { font-weight: 600; color: var(--text); }

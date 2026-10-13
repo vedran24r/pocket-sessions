@@ -284,3 +284,36 @@ export async function transcriptTitles(file: string): Promise<Titles> {
     await handle.close();
   }
 }
+
+const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+/**
+ * Files the agent edited in this conversation, read from its transcript: Claude's file tools, and
+ * Codex's apply_patch headers (relative to the session folder). Used to find every repository a
+ * session worked in, which is often not the folder it started in (git worktrees, sibling repos).
+ */
+export async function editedFiles(file: string, cwd: string): Promise<string[]> {
+  const tail = new TranscriptTail(file);
+  const lines = await tail.initialLines(20 * 1024 * 1024).catch(() => [] as string[]);
+  const paths = new Set<string>();
+  for (const line of lines) {
+    if (!line.includes("tool_use") && !line.includes("apply_patch")) continue;
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    for (const block of Array.isArray(entry.message?.content) ? entry.message.content : []) {
+      if (block?.type === "tool_use" && EDIT_TOOLS.has(block.name)) {
+        const target = block.input?.file_path ?? block.input?.notebook_path;
+        if (typeof target === "string") paths.add(target);
+      }
+    }
+    const patch = entry.payload?.type === "custom_tool_call" && entry.payload?.name === "apply_patch" ? String(entry.payload.input ?? "") : "";
+    for (const match of patch.matchAll(/^\*\*\* (?:Update|Add) File: (.+)$/gm)) {
+      paths.add(match[1].startsWith("/") ? match[1] : `${cwd}/${match[1]}`);
+    }
+  }
+  return [...paths];
+}
