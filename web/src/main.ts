@@ -53,9 +53,15 @@ function ago(at: number): string {
   return `${Math.round(seconds / 86400)} d ago`;
 }
 
-async function api<T>(url: string, body?: unknown): Promise<T> {
-  const response = await fetch(url, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? response.statusText);
+/** Thrown when the Mac answered with an error, as opposed to no answer at all (no connection). */
+class ServerError extends Error {}
+
+async function api<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, body === undefined ? { signal } : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal }).catch((err) => {
+    // The browser's own wording ("Failed to fetch", "Load failed") says nothing to a person.
+    throw signal?.aborted ? err : new Error("No connection to the Mac right now");
+  });
+  if (!response.ok) throw new ServerError((await response.json().catch(() => ({}))).error ?? response.statusText);
   return response.json();
 }
 
@@ -119,7 +125,8 @@ function renderHome() {
       const badge = navigator as Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
       void (waiting ? badge.setAppBadge?.(waiting) : badge.clearAppBadge?.())?.catch(() => {});
     } catch (err) {
-      list.replaceChildren(h("p", { class: "muted pad" }, `Can't reach the Mac: ${(err as Error).message}`));
+      const text = err instanceof ServerError ? `Can't reach the Mac: ${err.message}` : "No connection to the Mac right now. This list refreshes by itself once there is.";
+      list.replaceChildren(h("p", { class: "muted pad" }, text));
     }
   };
   void refresh();
@@ -484,7 +491,7 @@ function renderSession(name: string) {
     const busy = currentStatus === "working" || pending.length > 0;
     working.hidden = !busy;
     stop.hidden = readonly || currentStatus !== "working";
-    workingText.textContent = activity || (currentStatus === "working" ? "Working…" : "Sending…");
+    workingText.textContent = activity || (currentStatus === "working" ? "Working…" : pending.some((entry) => entry.el.classList.contains("waiting")) ? "Waiting for signal…" : "Sending…");
   };
   chatEvents.addEventListener("chat", (event) => {
     const { reset, items } = JSON.parse((event as MessageEvent).data) as { reset?: boolean; items: Item[] };
@@ -825,52 +832,137 @@ function renderSession(name: string) {
     sessionStorage.setItem(draftKey, input.value);
     grow();
   };
-  const submit = async () => {
-    send.disabled = true;
-    await Promise.all(images.map((image) => image.ready));
-    const paths = images.flatMap((image) => (image.path ? [image.path] : []));
-    // The agent reads images by path; put them on their own lines after the message.
-    const typed = input.value.trim();
-    const text = [typed || (paths.length ? "Look at this image:" : ""), ...paths].filter(Boolean).join("\n");
-    if (!text) {
-      send.disabled = false;
-      return;
+  // Outbox: a message waits here (kept on the phone, so closing the app doesn't lose it) until the
+  // Mac confirms it. On a dead connection (a lift, Wi-Fi to mobile data) a request gets no answer at
+  // all, so each try has a time limit and is retried; the id lets the Mac skip a retry of a message
+  // it already typed when only its answer got lost. Messages go out one at a time, in order, and
+  // Send never waits for them.
+  interface Outgoing { id: string; text: string; el: HTMLElement }
+  const outboxKey = `pocket-outbox-${name}`;
+  const outbox: Outgoing[] = [];
+  const saveOutbox = () => {
+    try {
+      if (outbox.length) localStorage.setItem(outboxKey, JSON.stringify(outbox.map(({ id, text }) => ({ id, text }))));
+      else localStorage.removeItem(outboxKey);
+    } catch {}
+  };
+  let closed = false;
+  let attempt: AbortController | undefined;
+  let wake = () => {};
+  let flushing = false;
+  const drop = (entry: Outgoing) => {
+    const index = outbox.indexOf(entry);
+    if (index >= 0) outbox.splice(index, 1);
+    saveOutbox();
+  };
+  const delivered = (entry: Outgoing) => {
+    entry.el.classList.remove("waiting");
+    // Not recorded within a minute (e.g. the agent was showing a menu): stop pretending it's on its way.
+    setTimeout(() => {
+      const index = pending.indexOf(entry);
+      if (index >= 0) {
+        pending.splice(index, 1);
+        entry.el.classList.replace("pending", "unconfirmed");
+        entry.el.title = "Sent, but the agent hasn't recorded it yet — check the Terminal tab";
+        settleBottom();
+      }
+    }, 60_000);
+  };
+  const refused = (entry: Outgoing, message: string) => {
+    const index = pending.indexOf(entry);
+    if (index >= 0) pending.splice(index, 1);
+    entry.el.classList.remove("waiting");
+    entry.el.classList.replace("pending", "failed");
+    if (!input.value.trim()) {
+      input.value = entry.text;
+      grow();
     }
+    settleBottom();
+    toast(message);
+  };
+  const flush = async () => {
+    if (flushing) return;
+    flushing = true;
+    let delay = 1000;
+    while (outbox.length && !closed) {
+      const entry = outbox[0];
+      const tryNow = (attempt = new AbortController());
+      const limit = setTimeout(() => tryNow.abort(), 15_000);
+      try {
+        await api(`/api/sessions/${name}/send`, { text: entry.text, id: entry.id }, tryNow.signal);
+        drop(entry);
+        delivered(entry);
+        for (const queued of outbox) queued.el.classList.remove("waiting");
+        settleBottom();
+        delay = 1000;
+      } catch (err) {
+        if (err instanceof ServerError) {
+          drop(entry);
+          refused(entry, err.message);
+          continue;
+        }
+        // No answer: no connection, or one that died silently. Try again soon. A try that hit the
+        // time limit means the connections are dead, so the chat's own one likely is too.
+        for (const queued of outbox) queued.el.classList.add("waiting");
+        settleBottom();
+        if (tryNow.signal.aborted) connectChat();
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          setTimeout(resolve, delay);
+        });
+        delay = Math.min(delay * 2, 15_000);
+      } finally {
+        clearTimeout(limit);
+        attempt = undefined;
+      }
+    }
+    flushing = false;
+  };
+  const enqueue = (text: string, id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`) => {
     const bubble = chatItem({ k: "user", t: text });
     bubble.classList.add("pending");
-    const entry = { text, el: bubble };
+    const entry = { id, text, el: bubble };
+    // Tap a message that hasn't gone out yet to drop it (say it waited out a long lift and is stale).
+    bubble.onclick = () => {
+      const index = outbox.indexOf(entry);
+      if (index < 0 || !confirm("Drop this message? If it already reached the Mac, it can't be taken back.")) return;
+      drop(entry);
+      if (index === 0) attempt?.abort();
+      const shown = pending.indexOf(entry);
+      if (shown >= 0) pending.splice(shown, 1);
+      bubble.remove();
+      settleBottom();
+    };
     const isCommand = text.startsWith("/"); // slash commands aren't recorded as messages
     placeholder.remove();
     if (!isCommand) pending.push(entry);
     settleBottom();
     if (isCommand) chat.insertBefore(bubble, working);
     chat.scrollTop = chat.scrollHeight;
-    try {
-      await api(`/api/sessions/${name}/send`, { text });
-      images.splice(0).forEach((image) => image.chip.remove());
-      refreshAttachments();
-      input.value = "";
-      sessionStorage.removeItem(draftKey);
-      grow();
-      // Not recorded within a minute (e.g. the agent was showing a menu): stop pretending it's on its way.
-      setTimeout(() => {
-        const index = pending.indexOf(entry);
-        if (index >= 0) {
-          pending.splice(index, 1);
-          bubble.classList.replace("pending", "unconfirmed");
-          bubble.title = "Sent, but the agent hasn't recorded it yet — check the Terminal tab";
-          settleBottom();
-        }
-      }, 60_000);
-    } catch (err) {
-      const index = pending.indexOf(entry);
-      if (index >= 0) pending.splice(index, 1);
-      bubble.classList.replace("pending", "failed");
-      settleBottom();
-      toast((err as Error).message);
-    } finally {
-      send.disabled = false;
-    }
+    outbox.push(entry);
+  };
+  try {
+    for (const saved of JSON.parse(localStorage.getItem(outboxKey) ?? "[]") as { id: string; text: string }[]) enqueue(saved.text, saved.id);
+  } catch {}
+  void flush();
+
+  const submit = async () => {
+    send.disabled = true;
+    await Promise.all(images.map((image) => image.ready));
+    send.disabled = false;
+    const paths = images.flatMap((image) => (image.path ? [image.path] : []));
+    // The agent reads images by path; put them on their own lines after the message.
+    const typed = input.value.trim();
+    const text = [typed || (paths.length ? "Look at this image:" : ""), ...paths].filter(Boolean).join("\n");
+    if (!text) return;
+    images.splice(0).forEach((image) => image.chip.remove());
+    refreshAttachments();
+    input.value = "";
+    sessionStorage.removeItem(draftKey);
+    grow();
+    enqueue(text);
+    saveOutbox();
+    void flush();
   };
   send.onclick = submit;
   renderReplies();
@@ -883,12 +975,28 @@ function renderSession(name: string) {
     if (document.visibilityState !== "visible") return;
     connectChat();
     if (screenSource) void openTerminal();
+    wake();
   };
   document.addEventListener("visibilitychange", onReturn);
+  // The phone got (a new) connection: anything still open may be on the old, dead one. Start over now
+  // instead of waiting for the time limits.
+  const onNewNetwork = () => {
+    connectChat();
+    if (screenSource) void openTerminal();
+    attempt?.abort();
+    wake();
+  };
+  const connection = (navigator as Navigator & { connection?: EventTarget }).connection;
+  window.addEventListener("online", onNewNetwork);
+  connection?.addEventListener("change", onNewNetwork);
 
   cleanup = () => {
+    closed = true;
+    wake();
     clearInterval(watchdog);
     document.removeEventListener("visibilitychange", onReturn);
+    window.removeEventListener("online", onNewNetwork);
+    connection?.removeEventListener("change", onNewNetwork);
     chatSource?.close();
     closeTerminal();
     term?.dispose();

@@ -140,11 +140,38 @@ export class TranscriptTail {
   }
 
   async initial(): Promise<Item[]> {
-    return (await this.initialLines()).flatMap(parseLine).slice(-INITIAL_ITEMS);
+    return (await this.initialLines()).flatMap((line) => this.parse(line)).slice(-INITIAL_ITEMS);
   }
 
   async next(): Promise<Item[]> {
-    return (await this.nextLines()).flatMap(parseLine);
+    return (await this.nextLines()).flatMap((line) => this.parse(line));
+  }
+
+  // A queued message is shown when it's queued. When the agent takes it in as a new turn (a
+  // "dequeue", e.g. it arrived just as the agent finished), it's then written again as a normal
+  // message; that second copy is skipped. Taken in mid-turn, it's "removed" with no second copy.
+  private queued: string[] = [];
+  private echo: string | undefined;
+
+  private parse(line: string): Item[] {
+    if (line.includes('"queue-operation"')) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.operation === "enqueue" && typeof entry.content === "string") this.queued.push(entry.content);
+        if (entry.operation === "dequeue") this.echo = this.queued.shift();
+        if (entry.operation === "remove") {
+          const index = this.queued.indexOf(entry.content);
+          this.queued.splice(index >= 0 ? index : 0, 1);
+        }
+      } catch {}
+    }
+    const items = parseLine(line);
+    if (this.echo !== undefined && items[0]?.k === "user" && line.includes('"type":"user"')) {
+      const echoed = userText(this.echo);
+      this.echo = undefined;
+      if (items.length === 1 && echoed === items[0].t) return [];
+    }
+    return items;
   }
 
   async initialLines(maxBytes = INITIAL_BYTES): Promise<string[]> {

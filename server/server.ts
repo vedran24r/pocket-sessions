@@ -405,6 +405,16 @@ function chatStream(req: IncomingMessage, res: ServerResponse, session: string) 
   listeners.add(listener);
 }
 
+// The phone retries a message until it hears back, and on a bad connection the first try may have
+// arrived with only the answer lost. Each message carries an id, so a retry is never typed twice.
+const typedSends = new Map<string, number>();
+const SEND_MEMORY_MS = 24 * 3600_000;
+function rememberSend(key: string): void {
+  const now = Date.now();
+  for (const [old, at] of typedSends) if (now - at > SEND_MEMORY_MS) typedSends.delete(old);
+  typedSends.set(key, now);
+}
+
 // Open Terminal views per session, so input from the phone can refresh them at once instead of on
 // the next poll; that's what makes taps and swipes feel direct.
 const screenPokes = new Map<string, Set<() => void>>();
@@ -648,9 +658,15 @@ const server = http.createServer(async (req, res) => {
         return screenStream(req, res, session, fit);
       }
       if (action === "send" && req.method === "POST") {
-        const { text, submit = true } = await readJson(req);
+        const { text, submit = true, id } = await readJson(req);
         if (typeof text !== "string" || !text.trim()) return json(res, 400, { error: "empty" });
-        await tmux.sendText(session, text, submit);
+        const sendKey = typeof id === "string" && id ? `${session}/${id}` : "";
+        if (sendKey && typedSends.has(sendKey)) return json(res, 200, { ok: true, duplicate: true });
+        if (sendKey) rememberSend(sendKey);
+        await tmux.sendText(session, text, submit).catch((err) => {
+          typedSends.delete(sendKey); // not typed, so a retry should try again
+          throw err;
+        });
         // /rename fires no hook, so the laptop tab would keep the old name until the next prompt.
         const renamed = submit && text.trim().match(/^\/rename\s+(.+)$/)?.[1];
         if (renamed) await tmux.renamePaneTitle(session, renamed.trim()).catch(() => {});

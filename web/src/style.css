@@ -107,6 +107,7 @@ textarea:focus { border-color: var(--accent); }
 .shared-note[hidden] { display: none; }
 .msg.user.pending { opacity: 0.55; }
 .msg.user.pending::after { content: " · sending…"; font-size: 12px; color: var(--muted); }
+.msg.user.pending.waiting::after { content: " · no signal, sends when it's back (tap to drop)"; }
 .msg.user.unconfirmed::after { content: " · not in the chat yet"; font-size: 12px; color: var(--working); }
 .msg.user.failed { border: 1px solid var(--waiting); }
 .msg.user.failed::after { content: " · not sent"; font-size: 12px; color: var(--waiting); }

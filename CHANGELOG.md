@@ -18,6 +18,7 @@ First release.
 - Session list by conversation name with live status. Sessions that need you come first, and the app icon shows a badge with how many are waiting.
 - Chat view, Terminal view, and a **Changes** tab: what the session changed in every repository it worked in (its folder, plus worktrees or other repos it edited). On a feature branch it counts everything since the branch split off the main branch, committed or not. It shows lines added and removed, with a diff per file.
 - A message you send shows at once ("sending…"), including one typed while the agent is busy. Pocket makes sure it's actually submitted. It's typed into the session rather than pasted, so the agent takes it as your own message: long or multi-line messages aren't marked as pasted text. Quick double sends arrive separately and in order.
+- **Patchy signal is fine.** Without signal (a lift, or switching from Wi-Fi to mobile data), a message waits on the phone. It goes out by itself once there's a connection, exactly once and in order, even if you close the app in between. Send never locks up. Tap a waiting message to drop it. A message typed just as the agent finishes no longer shows twice in the chat.
 - While the agent works, the chat shows its live status line (e.g. "✻ Determining… (8s · ↓ 89 tokens)"), with a **Stop** button. Once it stops (finished, Stop, Esc or Ctrl-C), the line goes away within seconds.
 - A message box made for voice dictation, one-tap **quick replies** ("continue", "commit and push"…) that you can edit, and a minimal keys bar (Esc, ⏎, ⇧Tab, ^C, and ⋯ for the rest). Menus are answered by tapping the option.
 - Menus that don't take taps (Claude's "trust this folder?" prompt) can still be tapped: Pocket moves the selection to the option you tapped and confirms it.
@@ -25,7 +26,7 @@ First release.
 - The app fits exactly the visible screen, above the keyboard and the system navigation bar. The terminal always fits whole (scaled down if a laptop window keeps it larger), and the chat stays on the newest message.
 - **Images** from the gallery: shrunk on the phone and passed to the agent; they show as pictures in the chat.
 - Tappable links in messages.
-- Stays current after the phone sleeps or you switch apps: the live connection is re-made when the app is back on screen, or when the server's heartbeat goes missing.
+- Stays current after the phone sleeps or you switch apps: the live connection is re-made when the app is back on screen, when the phone gets a new connection, or when the server's heartbeat goes missing. Offline, the app still opens and catches up on its own.
 - **＋ New** starts a session in a recent folder, with any Claude profile or Codex. **End** closes a session; **Hide** removes a view-only one. Sessions in a folder with a dot in its name (`my.project`, or a home folder like `first.last`) work too, **End** included.
 - While you view the Terminal tab, the session takes the phone's size (unless you're using the laptop window right now) and reflows to it. It gives the laptop window its size back when you leave. **Pinch** zooms the terminal text, as do A− / A+. Tab titles follow the agent's own title.
 
