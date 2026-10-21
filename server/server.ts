@@ -241,7 +241,12 @@ async function startSession(body: any): Promise<string> {
   const name = await tmux.uniqueName(`pk-${profile.replace(/[^a-z0-9]/g, "")}-${slug}`);
   const env: Record<string, string> = {};
   if (agent === "claude" && profiles[profile]) env.CLAUDE_CONFIG_DIR = profiles[profile];
-  const command = agent === "codex" ? "exec codex" : `exec claude --add-dir ${JSON.stringify(UPLOADS)}`;
+  // Optional display name and first prompt, so another tool (e.g. Switchboard) can start a session with a task.
+  const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+  const displayName = typeof body.name === "string" ? body.name.trim().slice(0, 80) : "";
+  const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  const extra = agent === "claude" ? (displayName ? ` -n ${shellQuote(displayName)}` : "") + (prompt ? ` -- ${shellQuote(prompt)}` : "") : "";
+  const command = agent === "codex" ? "exec codex" : `exec claude --add-dir ${JSON.stringify(UPLOADS)}${extra}`;
   // A login + interactive shell picks up the user's PATH, nvm, AWS profile etc. from their rc files.
   await tmux.newSession(name, cwd, env, [process.env.SHELL || "/bin/zsh", "-lic", command], agent);
   state.sessions[name] = { profile, agent, status: "idle", statusAt: Date.now(), cwd };
