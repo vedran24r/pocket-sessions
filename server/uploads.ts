@@ -36,7 +36,7 @@ const FILE_RE = /^phone-[\w-]+\.(jpg|png|webp|gif)$/;
 
 /** An uploaded image for the chat to show; names are checked so nothing else can be read. */
 export function uploadPath(session: string, file: string): string | undefined {
-  if (!/^[a-z0-9._-]+$/.test(session) || !FILE_RE.test(file)) return undefined;
+  if (!/^[A-Za-z0-9._-]+$/.test(session) || !FILE_RE.test(file)) return undefined;
   return path.join(UPLOADS, session, file);
 }
 

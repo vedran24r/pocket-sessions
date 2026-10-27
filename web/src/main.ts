@@ -284,7 +284,7 @@ function chatItem(item: Item): HTMLElement {
   if (item.k === "error") return h("div", { class: "tool error" }, item.t);
   const bubble = h("div", { class: `msg ${item.k}` });
   // Images sent from the phone travel as file paths; show the picture instead of the path.
-  const upload = /^\S*\/\.pocket-sessions\/uploads\/([a-z0-9._-]+)\/(phone-[\w-]+\.(?:jpg|png|webp|gif))$/;
+  const upload = /^\S*\/\.pocket-sessions\/uploads\/([A-Za-z0-9._-]+)\/(phone-[\w-]+\.(?:jpg|png|webp|gif))$/;
   const lines = item.t.split("\n");
   const pictures = item.k === "user" ? lines.map((line) => line.trim().match(upload)).filter((match) => !!match) : [];
   const text = pictures.length ? lines.filter((line) => !upload.test(line.trim())).join("\n").trim() : item.t;
@@ -1009,7 +1009,7 @@ function route() {
   document.querySelectorAll(".overlay").forEach((overlay) => overlay.remove()); // an open sheet belongs to the old page
   cleanup?.();
   cleanup = undefined;
-  const match = location.hash.match(/^#\/s\/((?:pk|ro)-[a-z0-9._-]+)$/);
+  const match = location.hash.match(/^#\/s\/((?:pk|ro)-[A-Za-z0-9._-]+)$/);
   match ? renderSession(match[1]) : renderHome();
 }
 

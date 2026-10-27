@@ -11,7 +11,8 @@ const BASE = ["-L", process.env.POCKET_TMUX_SOCKET || "pocket", "-f", CONF];
 const SEP = "|:|";
 
 /** pk-* live in the pocket tmux server; ro-* are sessions running elsewhere, known only from hooks. */
-export const SESSION_RE = /^(pk|ro)-[a-z0-9._-]+$/;
+// Upper case too: names come from the folder ("pk-claude-repo-ABC-12"), and rejecting them made every send fail.
+export const SESSION_RE = /^(pk|ro)-[A-Za-z0-9._-]+$/;
 export const isTmux = (session: string) => session.startsWith("pk-");
 // Always target a session as `=name:`. Without the colon, tmux reads a dot in the name
 // (an old `pk-claude-vedran.ristic`) as session.pane, and the session can't be found.
